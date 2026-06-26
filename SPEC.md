@@ -576,7 +576,7 @@ Plugins are listed in agentOS.yaml:
 ```yaml
 plugins:
   - name: three-questions
-    source: github:open-agentos/github-agentOS-spec//plugins/three-questions@v1.0
+    source: github:open-agentos/spec//plugins/three-questions@v1.0
 ```
 
 Sources supported in v1.0:

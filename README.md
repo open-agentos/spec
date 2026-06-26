@@ -19,7 +19,7 @@ in under 30 minutes.
 pip install agentOS-cli
 
 # 2. Initialise a spec file in your project
-agentOS init --from github:open-agentos/github-agentOS-spec@v1.0
+agentOS init --from github:open-agentos/spec@v1.0
 
 # 3. Register GitHub Apps (interactive wizard — opens browser once per role)
 agentOS setup --repo owner/my-repo
@@ -74,7 +74,7 @@ Core is intentionally minimal. Project-specific behaviour lives in plugins:
 ```yaml
 plugins:
   - name: three-questions
-    source: github:open-agentos/github-agentOS-spec//plugins/three-questions@v1.0
+    source: github:open-agentos/spec//plugins/three-questions@v1.0
 ```
 
 The `three-questions` reference plugin ships with this repo and demonstrates the plugin interface.

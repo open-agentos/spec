@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentOS-cli"
+version = "1.0.0"
+description = "CLI for GitHub AgentOS — provision label-driven multi-agent orchestration"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+  { name = "Open AgentOS Contributors", email = "noreply@github.com" }
+]
+keywords = ["github", "agents", "automation", "ai", "orchestration"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+  "requests>=2.31",
+  "PyYAML>=6.0",
+  "PyJWT>=2.8",
+  "cryptography>=41.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-mock>=3.12",
+  "responses>=0.25",       # mock HTTP for label/board tests
+  "jsonschema>=4.21",      # validate agentOS.yaml against schema
+]
+
+[project.scripts]
+agentOS = "bootstrap.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/open-agentos/spec"
+Documentation = "https://github.com/open-agentos/spec/blob/main/SPEC.md"
+Repository = "https://github.com/open-agentos/spec"
+"Bug Tracker" = "https://github.com/open-agentos/spec/issues"
+
+[tool.setuptools.packages.find]
+include = ["bootstrap*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
