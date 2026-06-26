@@ -1,0 +1,41 @@
+# WARNING: rates in this file may become stale as providers update pricing.
+# Review and update whenever you add a new model or notice billing discrepancies.
+# The 'default' entry is used as a fallback for any model not explicitly listed.
+#
+# Per-model configuration keyed by provider + model name.
+#
+# Sections:
+#   - cost rates (input_per_m_usd / output_per_m_usd)
+#   - context window size (context_window_tokens)
+#
+# Add a new entry for each model; the 'default' entry is the fallback
+# when a model is not explicitly listed. No code change is needed to add a model.
+#
+# Keys: provider (matches LLM_PROVIDER env / cfg.provider) + model name
+
+models:
+  cloudflare:
+    "@cf/zai-org/glm-5.2":
+      input_per_m_usd: 1.40
+      output_per_m_usd: 4.40
+      context_window_tokens: 262144
+    "@cf/moonshotai/kimi-k2.7-code":
+      input_per_m_usd: 0.90
+      output_per_m_usd: 1.75
+      context_window_tokens: 262144
+  anthropic:
+    "claude-haiku-4-5-20251001":
+      input_per_m_usd: 0.80
+      output_per_m_usd: 4.00
+      context_window_tokens: 250000
+    "claude-sonnet-4-6":
+      input_per_m_usd: 3.00
+      output_per_m_usd: 15.00
+      context_window_tokens: 250000
+
+default:
+  input_per_m_usd: 1.00
+  output_per_m_usd: 5.00
+  # Conservative fallback for unrecognized models: intentionally small so that
+  # any percentage-based compaction threshold triggers early rather than late.
+  context_window_tokens: 250000

@@ -1,0 +1,89 @@
+# =============================================================================
+# Run Receipt — reusable workflow that posts a machine-parseable run summary
+# Callers: add `uses: ./.github/workflows/run-receipt.yml` with `job_status`
+# =============================================================================
+
+name: Run Receipt
+
+on:
+  workflow_call:
+    inputs:
+      job_status:
+        description: 'Final status of the calling job (success, failure, cancelled)'
+        type: string
+        required: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # post-receipt — parses branch metadata and posts the receipt comment
+  # ---------------------------------------------------------------------------
+  post-receipt:
+    name: Post run receipt comment
+    runs-on: ubuntu-latest
+    # Only run when the triggering branch follows the agent/* naming convention
+    if: startsWith(github.ref_name, 'agent/')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Parse role and issue number from branch: agent/{role}/{number}-{slug}
+      # -----------------------------------------------------------------------
+      - name: Parse branch metadata
+        id: parse-branch
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          echo "Branch: $BRANCH"
+
+          # Extract role — second path segment after 'agent/'
+          ROLE=$(echo "$BRANCH" | cut -d'/' -f2)
+
+          # Extract issue number — first numeric segment of the third path component
+          NUMBER_SLUG=$(echo "$BRANCH" | cut -d'/' -f3)
+          ISSUE_NUMBER=$(echo "$NUMBER_SLUG" | grep -oE '^[0-9]+')
+
+          if [ -z "$ROLE" ] || [ -z "$ISSUE_NUMBER" ]; then
+            echo "Could not parse branch '$BRANCH' — skipping receipt."
+            exit 0
+          fi
+
+          echo "AGENT_ROLE=$ROLE"          >> "$GITHUB_ENV"
+          echo "ISSUE_NUMBER=$ISSUE_NUMBER" >> "$GITHUB_ENV"
+          echo "BRANCH=$BRANCH"             >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Compute duration using the workflow run timestamps
+      # -----------------------------------------------------------------------
+      - name: Compute duration
+        id: duration
+        run: |
+          START="${{ github.event.workflow_run.run_started_at || '' }}"
+          if [ -n "$START" ]; then
+            START_TS=$(date -d "$START" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$START" +%s)
+            NOW_TS=$(date +%s)
+            DURATION=$(( NOW_TS - START_TS ))
+          else
+            DURATION="unknown"
+          fi
+          echo "DURATION=$DURATION" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Post the machine-parseable receipt comment
+      # -----------------------------------------------------------------------
+      - name: Post receipt comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          STATUS="${{ inputs.job_status }}"
+          RUN_ID="${{ github.run_id }}"
+
+          BODY="<!-- agentOS:run-receipt -->
+          **Run Receipt** | Role: \`${AGENT_ROLE}\` | Status: \`${STATUS}\` | Duration: \`${DURATION}s\`
+          Run ID: \`${RUN_ID}\` | Branch: \`${BRANCH}\`
+          <!-- /agentOS:run-receipt -->"
+
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "$BODY" \
+            --repo "${{ github.repository }}"

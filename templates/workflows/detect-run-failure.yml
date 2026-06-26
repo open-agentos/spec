@@ -1,0 +1,111 @@
+# =============================================================================
+# Detect Run Failure — monitors the Agent Orchestrator and escalates failures
+# =============================================================================
+
+name: Detect Run Failure
+
+on:
+  workflow_run:
+    workflows: ['Agent Orchestrator']
+    types: [completed]
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # detect-failure — only fires when the orchestrator concluded as a failure
+  # ---------------------------------------------------------------------------
+  detect-failure:
+    name: Escalate orchestrator failure
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'failure'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Fetch details of the failed jobs from the GitHub API
+      # -----------------------------------------------------------------------
+      - name: Fetch failed job details
+        id: fetch-jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          echo "Failed workflow run: $RUN_ID"
+
+          # Fetch jobs list for this run
+          JOBS_JSON=*** gh api \
+            "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs')
+          echo "JOBS_JSON=*** >> "$GITHUB_ENV"
+          echo "$JOBS_JSON" | python3 -c "
+          import json, sys, os
+          jobs = json.load(sys.stdin)
+          failed = [j for j in jobs if j['conclusion'] == 'failure']
+          if failed:
+              j = failed[0]
+              print(f\"First failed job: {j['name']} (id={j['id']})\")
+              with open(os.environ['GITHUB_ENV'], 'a') as f:
+                  f.write(f\"FAILED_JOB_NAME={j['name']}\n\")
+          "
+
+      # -----------------------------------------------------------------------
+      # Parse issue number from the failed job name or the triggering branch
+      # -----------------------------------------------------------------------
+      - name: Parse issue number
+        id: parse-issue
+        run: |
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
+          JOB_NAME="${FAILED_JOB_NAME:-}"
+          ISSUE_NUMBER=""
+
+          # Try to extract from branch name: agent/{role}/{number}-{slug}
+          if echo "$BRANCH" | grep -qE '^agent/[^/]+/[0-9]+'; then
+            ISSUE_NUMBER=$(echo "$BRANCH" | grep -oE '/[0-9]+' | head -1 | tr -d '/')
+            echo "Parsed issue number from branch: $ISSUE_NUMBER"
+          fi
+
+          # Try to extract from job name if branch parsing failed
+          if [ -z "$ISSUE_NUMBER" ] && echo "$JOB_NAME" | grep -qE '#[0-9]+'; then
+            ISSUE_NUMBER=$(echo "$JOB_NAME" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+            echo "Parsed issue number from job name: $ISSUE_NUMBER"
+          fi
+
+          # Fall back to issue #1 if we could not determine the target
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "Could not determine issue number — falling back to issue #1."
+            ISSUE_NUMBER=1
+          fi
+
+          echo "ISSUE_NUMBER=$ISSUE_NUMBER" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Post a structured escalation comment to the target issue
+      # -----------------------------------------------------------------------
+      - name: Post escalation comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/$RUN_ID"
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
+
+          BODY="<!-- agentOS:run-failure -->
+          ## Agent Run Failure — Escalation Required
+
+          An agent orchestrator run has failed and requires human attention.
+
+          | Field | Value |
+          |-------|-------|
+          | Run ID | \`$RUN_ID\` |
+          | Branch | \`$BRANCH\` |
+          | Failed job | \`${FAILED_JOB_NAME:-unknown}\` |
+          | Logs | [View run]($RUN_URL) |
+
+          Please review the logs above and either re-trigger the agent or resolve the issue manually.
+          <!-- /agentOS:run-failure -->"
+
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "$BODY" \
+            --repo "${{ github.repository }}"

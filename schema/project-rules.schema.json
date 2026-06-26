@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/agentOS-spec/schema/project-rules.schema.json",
+  "title": "project-rules",
+  "description": "Schema for project-rules.json — operator-supplied project context given to agents.",
+  "type": "object",
+  "required": ["project_name", "repo"],
+  "additionalProperties": false,
+  "properties": {
+    "project_name": {
+      "type": "string",
+      "description": "Human-readable name for this project."
+    },
+    "repo": {
+      "type": "string",
+      "description": "GitHub repository in owner/repo format.",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "tech_stack": {
+      "type": "object",
+      "description": "Technology stack details. All fields are optional.",
+      "additionalProperties": false,
+      "properties": {
+        "frontend": {
+          "type": "string",
+          "description": "Frontend framework or technology (e.g. React, Vue, Next.js)."
+        },
+        "backend": {
+          "type": "string",
+          "description": "Backend framework or technology (e.g. FastAPI, Django, Express)."
+        },
+        "database": {
+          "type": "string",
+          "description": "Database technology (e.g. PostgreSQL, SQLite, MongoDB)."
+        },
+        "deploy": {
+          "type": "string",
+          "description": "Deployment platform or method (e.g. Fly.io, AWS ECS, Vercel)."
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "description": "File-level scoping rules that tell agents what they may and must not touch.",
+      "additionalProperties": false,
+      "properties": {
+        "files_in_scope": {
+          "type": "array",
+          "description": "Glob patterns or paths that agents are allowed to modify.",
+          "items": { "type": "string" }
+        },
+        "files_excluded": {
+          "type": "array",
+          "description": "Glob patterns or paths that agents must never modify.",
+          "items": { "type": "string" }
+        },
+        "shared_files": {
+          "type": "array",
+          "description": "Files shared across projects or services; agents should treat these as read-only unless explicitly permitted.",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "conventions": {
+      "type": "object",
+      "description": "Coding and workflow conventions that agents must follow.",
+      "additionalProperties": false,
+      "properties": {
+        "branch_naming": {
+          "type": "string",
+          "description": "Branch naming convention (e.g. 'agent/{role}/{issue}-{slug}')."
+        },
+        "commit_style": {
+          "type": "string",
+          "description": "Commit message style (e.g. 'conventional', 'imperative', 'freeform')."
+        },
+        "tests_required": {
+          "type": "boolean",
+          "description": "If true, agents must include or update tests for every code change."
+        },
+        "simplest_first": {
+          "type": "boolean",
+          "description": "If true, agents should prefer the simplest possible solution before adding complexity."
+        }
+      }
+    },
+    "custom": {
+      "type": "object",
+      "description": "Operator-defined extension fields. Any additional key-value pairs are allowed here.",
+      "additionalProperties": true
+    }
+  }
+}

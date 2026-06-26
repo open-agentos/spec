@@ -1,0 +1,68 @@
+# =============================================================================
+# Watcher Schedule — three-questions plugin
+# Runs the watcher agent on a daily schedule to generate the 3Qs brief
+# Template variable: {{AGENT_RUNNER}} replaced at install time
+# =============================================================================
+
+name: Watcher Schedule
+
+on:
+  # Daily at 08:00 UTC
+  schedule:
+    - cron: '0 8 * * *'
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # run-watcher — mints a watcher token and runs the agent
+  # ---------------------------------------------------------------------------
+  run-watcher:
+    name: Run watcher agent
+    runs-on: ubuntu-latest
+
+    env:
+      AGENT_ROLE: watcher
+      # Watcher creates its own issues; no pre-existing issue to target
+      ISSUE_NUMBER: '0'
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install script dependencies
+        run: pip install -r scripts/requirements.txt
+
+      # -----------------------------------------------------------------------
+      # Mint a scoped watcher token (issues:write only)
+      # -----------------------------------------------------------------------
+      - name: Mint watcher token
+        env:
+          WATCHER_APP_ID: ${{ secrets.WATCHER_APP_ID }}
+          WATCHER_PRIVATE_KEY: ${{ secrets.WATCHER_PRIVATE_KEY }}
+        run: |
+          WATCHER_TOKEN=*** scripts/github_token.py watcher)
+          echo "::add-mask::$WATCHER_TOKEN"
+          echo "GITHUB_TOKEN=*** >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Run the watcher agent ({{AGENT_RUNNER}} replaced at install time)
+      # -----------------------------------------------------------------------
+      - name: Run watcher agent
+        run: '{{AGENT_RUNNER}}'
+        env:
+          AGENT_ROLE: ${{ env.AGENT_ROLE }}
+          ISSUE_NUMBER: ${{ env.ISSUE_NUMBER }}
+          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+          LLM_PROVIDER: ${{ env.LLM_PROVIDER }}
+          LLM_MODEL: ${{ env.LLM_MODEL }}
+          LLM_API_KEY: ${{ env.LLM_API_KEY }}

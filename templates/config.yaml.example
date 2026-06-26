@@ -1,0 +1,37 @@
+# config.yaml — AgentOS runtime configuration
+# Copy this file to config.yaml and fill in your values.
+# NEVER commit config.yaml (it contains secrets). Add it to .gitignore.
+
+agent:
+  # The CLI command used to run agents. Must satisfy the runtime interface
+  # (SPEC.md §5): reads env vars, exits 0/1/2.
+  runner: "hermes run"   # or: claude, codex, ./scripts/run_agent.sh
+
+llm:
+  provider: "anthropic"  # anthropic | openai | cloudflare | custom
+  model: "claude-haiku-4-5-20251001"
+  max_tokens: 8096
+  temperature: 0.3
+  # api_key is read from LLM_API_KEY env var at runtime
+
+logging:
+  level: "INFO"          # DEBUG | INFO | WARNING | ERROR
+  format: "json"         # json | text
+
+features:
+  enable_caching: true
+  enable_retry: true
+  max_retries: 3
+
+projects:
+  # GitHub Projects v2 board ID. Set by `agentOS apply --board-only`.
+  # Format: PVT_kwDO...
+  board_id: ""
+
+repos:
+  # The repository this agent operates on.
+  # Format: owner/repo
+  target: ""
+  # Optional: a separate ops/metrics repository.
+  # Leave blank to store metrics in the same repo.
+  ops: ""

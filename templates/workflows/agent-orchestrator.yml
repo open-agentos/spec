@@ -1,0 +1,211 @@
+# =============================================================================
+# Agent Orchestrator — agentOS spec template
+# Template variables (replaced at install time):
+#   {{AGENT_RUNNER}}   — command/action that runs the agent
+#   {{MAX_TURNS}}      — maximum conversation turns for the agent
+#   {{SPEC_VERSION}}   — agentOS spec version this workflow was generated from
+# =============================================================================
+
+name: Agent Orchestrator
+
+on:
+  issues:
+    types: [opened, labeled, closed]
+  pull_request:
+    types: [labeled]
+
+# ---------------------------------------------------------------------------
+# Shared environment variables available to all jobs
+# ---------------------------------------------------------------------------
+env:
+  SPEC_VERSION: "{{SPEC_VERSION}}"
+  TARGET_REPO: ${{ github.repository }}
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # orchestrate — routes a status:* label event to the correct agent role
+  # ---------------------------------------------------------------------------
+  orchestrate:
+    name: Route label to agent
+    runs-on: ubuntu-latest
+    # Only run when a status:* label was just applied (issues or PRs)
+    if: >
+      (github.event_name == 'issues' && github.event.action == 'labeled' &&
+       startsWith(github.event.label.name, 'status:')) ||
+      (github.event_name == 'pull_request' && github.event.action == 'labeled' &&
+       startsWith(github.event.label.name, 'status:'))
+
+    env:
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
+      AGENT_MAX_TURNS: ${{ vars.AGENT_MAX_TURNS || '{{MAX_TURNS}}' }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install script dependencies
+        run: pip install -r scripts/requirements.txt
+
+      # -----------------------------------------------------------------------
+      # Routing table — map each status label to an AGENT_ROLE
+      # -----------------------------------------------------------------------
+      - name: Resolve agent role from label
+        id: resolve-role
+        run: |
+          LABEL="${{ github.event.label.name }}"
+          echo "Incoming label: $LABEL"
+
+          if   [ "$LABEL" = "status:todo" ]; then
+            echo "AGENT_ROLE=builder"  >> "$GITHUB_ENV"
+          elif [ "$LABEL" = "status:changes-requested" ]; then
+            echo "AGENT_ROLE=builder"  >> "$GITHUB_ENV"
+          elif [ "$LABEL" = "status:in-review" ]; then
+            echo "AGENT_ROLE=reviewer" >> "$GITHUB_ENV"
+          elif [ "$LABEL" = "status:approved" ]; then
+            # Skip if docs agent is not configured
+            if [ -z "${{ vars.DOCS_CONFIGURED }}" ]; then
+              echo "Docs agent not configured — skipping."
+              echo "AGENT_ROLE=skip" >> "$GITHUB_ENV"
+            else
+              echo "AGENT_ROLE=docs" >> "$GITHUB_ENV"
+            fi
+          elif [ "$LABEL" = "status:planning" ]; then
+            # Skip if planner agent is not configured
+            if [ -z "${{ vars.PLANNER_CONFIGURED }}" ]; then
+              echo "Planner agent not configured — skipping."
+              echo "AGENT_ROLE=skip" >> "$GITHUB_ENV"
+            else
+              echo "AGENT_ROLE=planner" >> "$GITHUB_ENV"
+            fi
+          else
+            echo "No matching role for label '$LABEL' — skipping."
+            echo "AGENT_ROLE=skip" >> "$GITHUB_ENV"
+          fi
+
+      # -----------------------------------------------------------------------
+      # Resolve issue number (works for both issue events and PR events)
+      # -----------------------------------------------------------------------
+      - name: Set issue number
+        if: env.AGENT_ROLE != 'skip'
+        run: |
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            echo "ISSUE_NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"
+          else
+            # For pull_request events use the PR number as the issue reference
+            echo "ISSUE_NUMBER=${{ github.event.pull_request.number }}" >> "$GITHUB_ENV"
+          fi
+
+      # -----------------------------------------------------------------------
+      # Mint a scoped GitHub token for the resolved agent role
+      # -----------------------------------------------------------------------
+      - name: Mint GitHub token for agent role
+        if: env.AGENT_ROLE != 'skip'
+        id: mint-token
+        env:
+          BUILDER_APP_ID: ${{ secrets.BUILDER_APP_ID }}
+          BUILDER_PRIVATE_KEY: ${{ secrets.BUILDER_PRIVATE_KEY }}
+          REVIEWER_APP_ID: ${{ secrets.REVIEWER_APP_ID }}
+          REVIEWER_PRIVATE_KEY: ${{ secrets.REVIEWER_PRIVATE_KEY }}
+          WATCHER_APP_ID: ${{ secrets.WATCHER_APP_ID }}
+          WATCHER_PRIVATE_KEY: ${{ secrets.WATCHER_PRIVATE_KEY }}
+        run: |
+          AGENT_TOKEN=$(python3 scripts/github_token.py "$AGENT_ROLE")
+          echo "::add-mask::$AGENT_TOKEN"
+          echo "GITHUB_TOKEN=$AGENT_TOKEN" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Run the agent ({{AGENT_RUNNER}} is replaced at install time)
+      # -----------------------------------------------------------------------
+      - name: Run agent
+        if: env.AGENT_ROLE != 'skip'
+        run: '{{AGENT_RUNNER}}'
+        env:
+          AGENT_ROLE: ${{ env.AGENT_ROLE }}
+          ISSUE_NUMBER: ${{ env.ISSUE_NUMBER }}
+          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+          LLM_PROVIDER: ${{ env.LLM_PROVIDER }}
+          LLM_MODEL: ${{ env.LLM_MODEL }}
+          AGENT_MAX_TURNS: ${{ env.AGENT_MAX_TURNS }}
+          LLM_API_KEY: ${{ env.LLM_API_KEY }}
+
+  # ---------------------------------------------------------------------------
+  # post-run-receipt — calls run-receipt.yml after orchestrate finishes
+  # ---------------------------------------------------------------------------
+  post-run-receipt:
+    name: Post run receipt
+    needs: orchestrate
+    if: always()
+    uses: ./.github/workflows/run-receipt.yml
+    with:
+      job_status: ${{ needs.orchestrate.result }}
+    secrets: inherit
+
+  # ---------------------------------------------------------------------------
+  # sync-close-label — when an issue is closed, apply status:done
+  # ---------------------------------------------------------------------------
+  sync-close-label:
+    name: Apply status:done on close
+    runs-on: ubuntu-latest
+    if: github.event_name == 'issues' && github.event.action == 'closed'
+
+    steps:
+      - name: Apply status:done label
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue edit ${{ github.event.issue.number }} \
+            --add-label "status:done" \
+            --repo "${{ github.repository }}"
+
+  # ---------------------------------------------------------------------------
+  # auto-add-to-project — add type:feature issues to the Projects v2 board
+  # ---------------------------------------------------------------------------
+  auto-add-to-project:
+    name: Add feature issues to project board
+    runs-on: ubuntu-latest
+    # Trigger on opened or labeled issues that carry the type:feature label
+    if: >
+      github.event_name == 'issues' &&
+      (github.event.action == 'opened' || github.event.action == 'labeled') &&
+      (github.event.label.name == 'type:feature' ||
+       contains(toJSON(github.event.issue.labels), 'type:feature'))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install script dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Set issue number
+        run: echo "ISSUE_NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"
+
+      - name: Mint board token
+        env:
+          BOARD_APP_ID: ${{ secrets.BOARD_APP_ID }}
+          BOARD_PRIVATE_KEY: ${{ secrets.BOARD_PRIVATE_KEY }}
+        run: |
+          BOARD_TOKEN=$(python3 scripts/github_token.py board)
+          echo "::add-mask::$BOARD_TOKEN"
+          echo "GITHUB_TOKEN=$BOARD_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Add issue to project board
+        run: |
+          python3 scripts/projector.py --add-to-board --issue "$ISSUE_NUMBER"
+        env:
+          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+          TARGET_REPO: ${{ github.repository }}
+          BOARD_ID: ${{ vars.BOARD_ID }}

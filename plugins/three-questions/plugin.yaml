@@ -1,0 +1,53 @@
+pluginVersion: 1.0
+name: three-questions
+description: Daily intelligence brief plugin for the 3Qs product system
+specVersionRequired: '>=1.0'
+
+# ---------------------------------------------------------------------------
+# Label axes added or extended by this plugin
+# ---------------------------------------------------------------------------
+labels:
+  # Phase axis — milestone tracking across project phases
+  - axis: phase
+    description: Project phase milestones
+    values:
+      - name: '1'
+        color: c2e0c6
+        description: Phase 1
+      - name: '2'
+        color: bfd4f2
+        description: Phase 2
+      - name: '3'
+        color: fef2c0
+        description: Phase 3
+
+  # Extends the core follow-on axis with a watcher-specific signal
+  - axis: follow-on
+    description: Async handoff signals (extends core follow-on axis)
+    values:
+      - name: dreaming-needed
+        color: d876e3
+        description: Watcher should generate new questions
+        routes_to: watcher
+
+# ---------------------------------------------------------------------------
+# Additional follow-on routing rules (merged into core routing table)
+# ---------------------------------------------------------------------------
+follow_on_routes:
+  docs-needed:
+    routes_to: docs
+
+# ---------------------------------------------------------------------------
+# Workflow files this plugin installs into the target repository
+# ---------------------------------------------------------------------------
+workflows:
+  - source: workflows/watcher-schedule.yml
+    target: .github/workflows/watcher-schedule.yml
+    enabled_by_default: true
+
+# ---------------------------------------------------------------------------
+# Agent configurations introduced by this plugin
+# ---------------------------------------------------------------------------
+agents:
+  - role: watcher
+    config_file: agents/watcher/AGENT.md.template
