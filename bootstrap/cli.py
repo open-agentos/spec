@@ -25,6 +25,8 @@ from typing import Optional
 
 import yaml
 
+from bootstrap import __version__
+
 log = logging.getLogger("agentOS")
 
 
@@ -250,6 +252,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentOS",
         description="GitHub AgentOS — provision label-driven multi-agent orchestration.",
+    )
+    parser.add_argument(
+        "--version", action="version",
+        version=f"agentOS {__version__}",
     )
     parser.add_argument("--spec", default="agentOS.yaml",
                         help="Path to agentOS.yaml (default: ./agentOS.yaml)")
