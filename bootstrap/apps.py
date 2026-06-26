@@ -86,9 +86,18 @@ def build_manifest(agent: dict[str, Any], app_name: str, base_url: str) -> dict:
     role_id = agent["id"]
     permissions = _permissions_for_role(agent)
     events = _DEFAULT_ROLE_EVENTS.get(role_id, ["issues"])
+    import os
+    app_url = os.environ.get(
+        "AGENTOS_APP_URL", "https://github.com/open-agentos/spec"
+    )
+    if not app_url.startswith("https://"):
+        raise ValueError(
+            f"AGENTOS_APP_URL must be an https:// URL (got {app_url!r}). "
+            "GitHub rejects http:// in the App manifest url field."
+        )
     return {
         "name": app_name,
-        "url": "https://github.com/open-agentos/spec",
+        "url": app_url,
         "hook_attributes": {"active": False},
         "redirect_url": f"{base_url}/callback",
         "public": False,
