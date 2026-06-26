@@ -1,0 +1,430 @@
+# agentOS.yaml — GitHub AgentOS Core Specification
+# Importable configuration for label-driven multi-agent orchestration on GitHub.
+# Human-readable, git-diffable, versioned.
+#
+# Import this file into your project with:
+#   agentOS init --from github:open-agentos/github-agentOS-spec@v1.0
+#
+# Then provision your repository with:
+#   agentOS apply --repo owner/my-repo
+
+specVersion: "1.0"
+specId: "github-agentOS"
+
+metadata:
+  name: "GitHub AgentOS"
+  description: "Label-driven multi-agent orchestration on GitHub"
+  homepage: "https://github.com/open-agentos/github-agentOS-spec"
+  license: "MIT"
+  authors:
+    - name: "Open AgentOS Contributors"
+      url: "https://github.com/open-agentos"
+
+# ============================================================
+# AGENTS
+# Each entry defines a role, its GitHub App identity, and its
+# permission scope. create_app: true means the bootstrap wizard
+# will register a dedicated GitHub App for this role.
+# reuse_app: builder means the role shares the builder App.
+# ============================================================
+agents:
+  - id: builder
+    description: >
+      Implements features and fixes. Opens pull requests. The only role with
+      write access to repository contents. Handles initial implementation
+      (status:todo) and retries after review (status:changes-requested).
+    create_app: true
+    permissions:
+      contents: write
+      issues: write
+      pull_requests: write
+      metadata: read
+      workflows: write        # Required to push .github/workflows/ changes
+    triggers:
+      - status:todo
+      - status:changes-requested
+    branch_prefix: "agent/builder/"
+
+  - id: reviewer
+    description: >
+      Reviews pull requests and code quality. Approves or requests changes.
+      Intentionally constrained: no write access to repository contents.
+      A reviewer that can push code can circumvent its own review.
+    create_app: true
+    permissions:
+      issues: write
+      pull_requests: write
+      metadata: read
+      checks: write
+    triggers:
+      - status:in-review
+    branch_prefix: "agent/reviewer/"
+
+  - id: watcher
+    description: >
+      Minimal-footprint role for settlement, issue creation, and monitoring.
+      Plugins that add scheduled behaviours (e.g. daily digests) run as watcher.
+    create_app: true
+    permissions:
+      issues: write
+      metadata: read
+    triggers: []              # Invoked by schedule or settlement, not labels
+    branch_prefix: "agent/watcher/"
+
+  - id: board
+    description: >
+      Projects v2 mutations only. Updates board fields after each run and on
+      PR settlement. No repository write access.
+    create_app: true
+    permissions:
+      organization_projects: write   # NOTE: NOT repository_projects
+      metadata: read
+    triggers: []              # Invoked by settlement workflow only
+    branch_prefix: ""         # board role does not open branches
+
+  # ---- Optional roles (uncomment to enable) ----
+
+  # - id: docs
+  #   description: >
+  #     Updates documentation and changelog after approved PRs and when
+  #     follow-on:docs-needed is applied. Reuses builder App credentials.
+  #   create_app: false
+  #   reuse_app: builder
+  #   triggers:
+  #     - status:approved
+  #   branch_prefix: "agent/docs/"
+
+  # - id: planner
+  #   description: >
+  #     Decomposes complex issues before passing to builder. Reuses builder App.
+  #   create_app: false
+  #   reuse_app: builder
+  #   triggers:
+  #     - status:planning
+  #   branch_prefix: "agent/planner/"
+
+# ============================================================
+# RUNTIME
+# The runner command is the CLI tool that executes agents.
+# Any command that satisfies the runtime interface (SPEC.md §5)
+# can be used: hermes, claude, codex, or a custom script.
+#
+# Required env vars injected by the orchestrator:
+#   AGENT_ROLE, ISSUE_NUMBER, GITHUB_TOKEN,
+#   GITHUB_REPOSITORY, GITHUB_RUN_ID
+#
+# Optional env vars (set if present in config):
+#   LLM_PROVIDER, LLM_MODEL, LLM_API_KEY,
+#   AGENT_MAX_TURNS, OPS_REPO, OPS_REPO_TOKEN
+# ============================================================
+runtime:
+  runner: "hermes run"           # Replace with your agent runner
+  max_turns_default: 40
+  branch_convention: "agent/{role}/{issue_number}-{slug}"
+  receipt_comment_marker: "<!-- agentOS:run-receipt -->"
+
+# ============================================================
+# LABELS
+# Organised into axes. The full label name is "{axis}:{value}".
+# routes_to wires a label to an agent role in the orchestrator.
+# All labels are provisioned idempotently (upsert by name).
+# ============================================================
+labels:
+
+  # ---- STATUS AXIS — PRIMARY ROUTING TRIGGER ----
+  - axis: status
+    description: "Issue lifecycle state. Changing this label drives the agent state machine."
+    values:
+      - name: todo
+        color: "ededed"
+        description: "Ready for builder to implement"
+        routes_to: builder
+
+      - name: in-progress
+        color: "0075ca"
+        description: "Builder is actively working on this"
+        routes_to: null           # Informational only
+
+      - name: in-review
+        color: "fbca04"
+        description: "PR open, reviewer agent running"
+        routes_to: reviewer
+
+      - name: changes-requested
+        color: "d93f0b"
+        description: "Reviewer requested changes; builder must retry"
+        routes_to: builder
+
+      - name: approved
+        color: "0e8a16"
+        description: "PR approved; ready to merge or hand off to docs"
+        routes_to: null           # docs role handles this if enabled
+
+      - name: blocked
+        color: "b60205"
+        description: "Cannot proceed without human intervention"
+        routes_to: null           # Human resolves
+
+      - name: planning
+        color: "bfd4f2"
+        description: "Needs decomposition before builder can start"
+        routes_to: null           # planner role handles this if enabled
+
+      - name: done
+        color: "0e8a16"
+        description: "Issue resolved; terminal state"
+        routes_to: null           # Terminal
+
+  # ---- AGENT AXIS — OWNERSHIP ----
+  - axis: agent
+    description: "Which agent currently holds this issue. Set by agents, read by humans."
+    values:
+      - name: builder
+        color: "1d76db"
+        description: "Builder agent is the current owner"
+
+      - name: reviewer
+        color: "cc317c"
+        description: "Reviewer agent is the current owner"
+
+      - name: docs
+        color: "5319e7"
+        description: "Docs agent is the current owner"
+
+      - name: watcher
+        color: "0075ca"
+        description: "Watcher agent is the current owner"
+
+  # ---- TYPE AXIS — ISSUE CLASSIFICATION ----
+  - axis: type
+    description: "Issue classification. Used for board filtering."
+    values:
+      - name: feature
+        color: "84b6eb"
+        description: "New feature or enhancement"
+        auto_add_to_board: true   # type:feature issues are added to Projects v2 board on open
+
+      - name: bug
+        color: "ee0701"
+        description: "Something is broken"
+
+      - name: chore
+        color: "fef2c0"
+        description: "Maintenance, dependency update, or refactor"
+
+      - name: question
+        color: "d876e3"
+        description: "A question or discussion item"
+
+  # ---- REVIEW AXIS — VERDICT SUB-FLAGS ----
+  - axis: review
+    description: "Fine-grained reviewer verdicts. Used alongside status:changes-requested."
+    values:
+      - name: scope-violation
+        color: "b60205"
+        description: "PR changes more than the issue scope allows"
+
+  # ---- SOURCE AXIS — ORIGIN PROVENANCE ----
+  - axis: source
+    description: "How this issue was created. Set at creation time."
+    values:
+      - name: agent-created
+        color: "0e8a16"
+        description: "Created by an agent"
+
+      - name: human-created
+        color: "bfd4f2"
+        description: "Created by a human"
+
+  # ---- FOLLOW-ON AXIS — ASYNC HANDOFF SIGNALS ----
+  # Routes_to is configurable. Null = informational only.
+  # Set routes_to to a role id to trigger that agent when the label is applied.
+  - axis: follow-on
+    description: "Signal that an async follow-on action is needed."
+    values:
+      - name: docs-needed
+        color: "fef2c0"
+        description: "Documentation should be updated as a follow-on action"
+        routes_to: null           # Set to "docs" to auto-trigger docs agent
+
+# ============================================================
+# BOARD
+# Projects v2 command-center board. One board per deployment.
+# Fields are provisioned idempotently via GraphQL.
+# The schema_fingerprint in field-bindings.json detects drift.
+# ============================================================
+board:
+  enabled: true
+  name: "AgentOS Command Center"
+  description: "Agent telemetry and task tracking board"
+  visibility: private             # private | public
+
+  fields:
+
+    # ---- METADATA FIELDS ----
+    - name: Role
+      type: single_select
+      flow: metadata
+      description: "Which agent role owns this issue"
+      label_map_axis: agent       # Synced from agent:* label value
+      options:
+        - name: Builder
+          color: BLUE
+        - name: Reviewer
+          color: RED
+        - name: Docs
+          color: GREEN
+        - name: Watcher
+          color: PURPLE
+
+    - name: Status
+      type: single_select
+      flow: metadata
+      description: "Current lifecycle status (mirrors status:* label)"
+      label_map_axis: status
+      options:
+        - name: Todo
+          color: GRAY
+        - name: In progress
+          color: BLUE
+        - name: In review
+          color: YELLOW
+        - name: Changes requested
+          color: ORANGE
+        - name: Approved
+          color: GREEN
+        - name: Blocked
+          color: RED
+        - name: Done
+          color: PURPLE
+
+    # ---- PARAMETER FIELDS ----
+    - name: Max turns
+      type: number
+      flow: parameter
+      description: "Maximum turns budget for this issue"
+      default: 40
+
+    - name: Model
+      type: single_select
+      flow: parameter
+      description: "Which LLM model to use for this issue (overrides default)"
+      options:
+        # Display names only. Map these to actual model IDs in config.yaml.
+        # NOTICE: These are 2026-06 reference models. Update as new models ship.
+        - name: claude-haiku
+          color: YELLOW
+          display: "Claude Haiku — fast, cheap, routine tasks"
+        - name: claude-sonnet
+          color: GREEN
+          display: "Claude Sonnet — balanced capability and cost"
+        - name: gpt-4o-mini
+          color: BLUE
+          display: "GPT-4o Mini — fast general-purpose"
+        - name: gemini-flash
+          color: PURPLE
+          display: "Gemini Flash — fast multimodal"
+        - name: kimi-k2
+          color: ORANGE
+          display: "Kimi K2 — strong coding performance"
+
+    # ---- TELEMETRY FIELDS ----
+    - name: Outcome
+      type: single_select
+      flow: telemetry
+      source: runner
+      reduce: latest_settlement
+      description: "Final disposition of the PR for this issue"
+      options:
+        - name: Provisional
+          color: YELLOW
+        - name: Merged
+          color: GREEN
+        - name: Closed unmerged
+          color: GRAY
+        - name: CI failed
+          color: RED
+        - name: Reverted
+          color: RED
+        - name: Abandoned
+          color: GRAY
+
+    - name: Clean exit
+      type: single_select
+      flow: telemetry
+      source: runner
+      reduce: last_run
+      description: "Exit status of the most recent agent run"
+      options:
+        - name: Clean
+          color: GREEN
+        - name: Crashed
+          color: RED
+        - name: Max turns
+          color: ORANGE
+        - name: Infra failure
+          color: RED
+
+    - name: Cost to date
+      type: number
+      flow: telemetry
+      source: runner
+      reduce: sum_runs
+      description: "Total USD cost of all runs for this issue"
+
+    - name: Turns
+      type: number
+      flow: telemetry
+      source: runner
+      reduce: sum_runs
+      description: "Total turns across all runs for this issue"
+
+    - name: Attempts
+      type: number
+      flow: telemetry
+      source: runner
+      reduce: count_runs
+      description: "Number of agent run attempts on this issue"
+
+# ============================================================
+# METRICS
+# JSONL run-record schema. One record per agent invocation.
+# One settlement record per PR close.
+# ============================================================
+metrics:
+  enabled: true
+  format: jsonl
+  schema_version: 6
+  output_path: "ops-metrics/"
+  retention_months: 3
+  events:
+    - run
+    - settlement
+  required_fields:
+    - schema_version
+    - event
+    - run_key
+    - identity.repo
+    - identity.role
+    - identity.model_name
+    - lifecycle.started_at
+    - lifecycle.ended_at
+    - cost.total_cost_usd
+    - clean_exit.status
+
+# ============================================================
+# PLUGINS
+# Plugins are applied after core provisioning. They may add
+# labels, board fields, workflows, and agent configs.
+# Plugins MUST NOT modify core-provisioned resources.
+#
+# Uncomment to activate. Sources:
+#   github:{owner}/{repo}//{path}@{ref}   Remote
+#   local:{path}                           Local relative path
+# ============================================================
+plugins: []
+# Example — uncomment to activate the reference 3Qs plugin:
+# plugins:
+#   - name: three-questions
+#     source: github:open-agentos/github-agentOS-spec//plugins/three-questions@v1.0
+#     description: "Daily 3Qs intelligence plugin — phase labels, watcher schedule"
