@@ -88,7 +88,7 @@ def build_manifest(agent: dict[str, Any], app_name: str, base_url: str) -> dict:
     events = _DEFAULT_ROLE_EVENTS.get(role_id, ["issues"])
     return {
         "name": app_name,
-        "url": base_url,
+        "url": "https://github.com/open-agentos/spec",
         "hook_attributes": {"active": False},
         "redirect_url": f"{base_url}/callback",
         "public": False,
