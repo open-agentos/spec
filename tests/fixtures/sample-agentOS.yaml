@@ -1,0 +1,85 @@
+specVersion: "1.0"
+specId: "test-agentos"
+
+metadata:
+  name: "Test AgentOS"
+  description: "Minimal sample spec for use in tests. Passes agentOS.schema.json."
+
+agents:
+  - id: builder
+    description: "Implements features and fixes."
+    create_app: true
+    permissions:
+      contents: write
+      issues: write
+      pull_requests: write
+      metadata: read
+    triggers:
+      - status:todo
+    branch_prefix: "agent/builder/"
+
+runtime:
+  runner: "hermes run"
+  max_turns_default: 40
+  branch_convention: "agent/{role}/{issue_number}-{slug}"
+  receipt_comment_marker: "<!-- agentOS:run-receipt -->"
+
+labels:
+  - axis: status
+    description: "Issue lifecycle state."
+    values:
+      - name: todo
+        color: "ededed"
+        description: "Ready for builder to implement"
+        routes_to: builder
+      - name: done
+        color: "0e8a16"
+        description: "Issue resolved; terminal state"
+        routes_to: null
+
+  - axis: type
+    description: "Issue classification."
+    values:
+      - name: feature
+        color: "84b6eb"
+        description: "New feature or enhancement"
+
+board:
+  enabled: true
+  name: "Test Command Center"
+  description: "Test board for unit tests"
+  visibility: private
+  fields:
+    - name: Status
+      type: single_select
+      flow: metadata
+      description: "Current lifecycle status"
+      label_map_axis: status
+      options:
+        - name: Todo
+          color: GRAY
+        - name: Done
+          color: GREEN
+
+    - name: Cost to date
+      type: number
+      flow: telemetry
+      source: runner
+      reduce: sum_runs
+      description: "Total USD cost of all runs for this issue"
+
+metrics:
+  enabled: true
+  format: jsonl
+  schema_version: 6
+  output_path: "ops-metrics/"
+  retention_months: 3
+  events:
+    - run
+    - settlement
+  required_fields:
+    - schema_version
+    - event
+    - run_key
+
+plugins: []
