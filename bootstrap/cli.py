@@ -80,11 +80,22 @@ def cmd_init(args: argparse.Namespace) -> int:
             content = src_path.read_text(encoding="utf-8")
         elif args.source.startswith("github:"):
             import urllib.request
-            # github:open-agentos/spec//agentOS.yaml@v1.0
-            ref = args.source[7:]   # strip "github:"
-            parts = ref.split("//", 1)
-            repo = parts[0]
-            rest = parts[1] if len(parts) > 1 else "agentOS.yaml@main"
+            # Supported formats:
+            #   github:owner/repo@ref               -> agentOS.yaml at ref
+            #   github:owner/repo//path/to/file@ref -> specific file at ref
+            raw = args.source[7:]   # strip "github:"
+            if "//" in raw:
+                repo_part, rest = raw.split("//", 1)
+            else:
+                repo_part, rest = raw, "agentOS.yaml@main"
+            # Split repo@ref if @ present in repo_part (short form)
+            if "@" in repo_part:
+                repo, inferred_ref = repo_part.rsplit("@", 1)
+                # If rest still has @, honour it; otherwise use inferred_ref
+                if "@" not in rest:
+                    rest = f"{rest}@{inferred_ref}"
+            else:
+                repo = repo_part
             if "@" in rest:
                 file_path, git_ref = rest.rsplit("@", 1)
             else:
