@@ -123,6 +123,34 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"Generated {dest} from bundled spec.")
         print("Edit it to customise roles, labels, and board fields.")
 
+    # Create .agentOS/ scaffold directories
+    scaffold_dirs = [
+        Path(".agentOS/keys"),
+        Path(".agentOS/logs"),
+        Path(".agentOS/plugins"),
+    ]
+    for d in scaffold_dirs:
+        d.mkdir(parents=True, exist_ok=True)
+        gitkeep = d / ".gitkeep"
+        if not gitkeep.exists():
+            gitkeep.touch()
+    print("Created .agentOS/ scaffold (keys/, logs/, plugins/)")
+
+    # Update .gitignore — add .agentOS/keys/ if not already present
+    gitignore = Path(".gitignore")
+    gitignore_entries = [
+        "# agentOS — local secrets and runtime state",
+        ".agentOS/keys/",
+        ".agentOS/logs/",
+        ".agentOS-state.json",
+    ]
+    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    additions = [e for e in gitignore_entries if e not in existing]
+    if additions:
+        with gitignore.open("a", encoding="utf-8") as f:
+            f.write("\n" + "\n".join(additions) + "\n")
+        print(f"Updated .gitignore with {len(additions)} agentOS entries")
+
     return 0
 
 
