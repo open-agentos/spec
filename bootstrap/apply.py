@@ -169,9 +169,9 @@ def _step_scaffold(spec: dict, opts: ApplyOptions, state: BootstrapState) -> Ste
         return StepOutcome("failed", errs)
 
 
-def _step_apps(_spec: dict, _opts: ApplyOptions, state: BootstrapState) -> StepOutcome:
+def _step_apps(_spec: dict, opts: ApplyOptions, state: BootstrapState) -> StepOutcome:
     """Apps are registered interactively via `agentOS setup`, not here."""
-    msg = "run `agentOS setup --repo {repo}` to register GitHub Apps"
+    msg = f"run `agentOS setup --repo {opts.repo}` to register GitHub Apps"
     state.mark_skipped("apps", msg)
     return StepOutcome("skipped", msg)
 
