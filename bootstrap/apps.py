@@ -237,18 +237,22 @@ def _register_one(agent: dict[str, Any], app_name: str, org: Optional[str],
 def write_credentials(role: str, creds: dict, env_file: Path) -> None:
     """Write/refresh role credentials in env_file.
 
-    Stores PEM inline (GITHUB_APP_PRIVATE_KEY_CONTENT_{ROLE}) with escaped
-    newlines so it is safe for GHA secrets and .env files alike. Never writes
-    the PEM as a separate file on disk.
+    Stores PEM inline ({ROLE}_PRIVATE_KEY) with escaped newlines so it is
+    safe for GHA secrets and .env files alike. Keys follow the convention
+    used in the workflow templates: {ROLE}_APP_ID and {ROLE}_PRIVATE_KEY
+    (e.g. BUILDER_APP_ID, BUILDER_PRIVATE_KEY).
+
+    Note: the GITHUB_ prefix is reserved by GitHub Actions and silently
+    rejected for repository secrets, so we never use it here.
     """
     role_u = role.upper()
     pem_escaped = creds["pem"].replace("\n", "\\n")
     new_entries: dict[str, str] = {
-        f"GITHUB_APP_ID_{role_u}": creds["id"],
-        f"GITHUB_APP_PRIVATE_KEY_CONTENT_{role_u}": pem_escaped,
+        f"{role_u}_APP_ID": creds["id"],
+        f"{role_u}_PRIVATE_KEY": pem_escaped,
     }
     if creds.get("webhook_secret"):
-        new_entries[f"GITHUB_APP_WEBHOOK_SECRET_{role_u}"] = creds["webhook_secret"]
+        new_entries[f"{role_u}_WEBHOOK_SECRET"] = creds["webhook_secret"]
 
     existing_lines = (
         env_file.read_text(encoding="utf-8").splitlines()

@@ -318,8 +318,8 @@ Writes .github/workflows/ files for each enabled agent role:
 These files reference the App credentials via repository secrets. The CLI also
 uploads the .pem files and App IDs as GitHub Actions secrets at this step:
 
-    Uploading secret AGENTOS_BUILDER_APP_ID ... done
-    Uploading secret AGENTOS_BUILDER_PRIVATE_KEY ... done
+    Uploading secret BUILDER_APP_ID ... done
+    Uploading secret BUILDER_PRIVATE_KEY ... done
     ... (repeated for each role)
 
 ### Step 4: Scaffold
@@ -464,7 +464,7 @@ This re-uploads all App credentials without re-running the full apply. Verify wi
 
     gh secret list --repo my-org/my-agent-repo
 
-You should see AGENTOS_BUILDER_APP_ID, AGENTOS_BUILDER_PRIVATE_KEY, and the
+You should see BUILDER_APP_ID, BUILDER_PRIVATE_KEY, and the
 equivalent pairs for reviewer, watcher, and board.
 
 ### Wrong App permissions

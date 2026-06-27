@@ -15,17 +15,17 @@ Usage (library):
 Credential resolution (per role; ROLE = BUILDER | REVIEWER | etc.):
 
   App ID:
-    GITHUB_APP_ID_{ROLE}
+    {ROLE}_APP_ID                e.g. BUILDER_APP_ID
 
   Private key (first match wins):
-    GITHUB_APP_PRIVATE_KEY_CONTENT_{ROLE}  — raw PEM inline (GHA secret friendly;
-                                              literal \\n sequences are honoured)
-    GITHUB_APP_PRIVATE_KEY_{ROLE}          — path to a .pem file on disk
+    {ROLE}_PRIVATE_KEY           — raw PEM inline (GHA secret friendly;
+                                    literal \\n sequences are honoured)
+    {ROLE}_PRIVATE_KEY_PATH      — path to a .pem file on disk
 
   Installation ID (optional):
-    GITHUB_APP_INSTALLATION_ID_{ROLE}      — if unset, discovered dynamically via
-                                              GET /repos/{owner}/{repo}/installation
-                                              using TARGET_REPO env var.
+    {ROLE}_INSTALLATION_ID       — if unset, discovered dynamically via
+                                    GET /repos/{owner}/{repo}/installation
+                                    using TARGET_REPO env var.
 
 Environment variables loaded from .env in the specified directory (or cwd).
 Process environment always takes precedence over .env values.
@@ -76,18 +76,18 @@ def _load_private_key(role: str):
     over an on-disk .pem file path.
     """
     role_u = role.upper()
-    content = os.environ.get(f"GITHUB_APP_PRIVATE_KEY_CONTENT_{role_u}")
+    content = os.environ.get(f"{role_u}_PRIVATE_KEY")
     if content:
         # GHA secrets may flatten newlines to literal \\n — restore them.
         if "\\n" in content and "\n" not in content.strip("\n"):
             content = content.replace("\\n", "\n")
         return load_pem_private_key(content.encode("utf-8"), password=None)
 
-    key_path = os.environ.get(f"GITHUB_APP_PRIVATE_KEY_{role_u}")
+    key_path = os.environ.get(f"{role_u}_PRIVATE_KEY_PATH")
     if not key_path:
         raise KeyError(
-            f"Missing credential: set GITHUB_APP_PRIVATE_KEY_CONTENT_{role_u} "
-            f"(inline PEM) or GITHUB_APP_PRIVATE_KEY_{role_u} (path to .pem file)"
+            f"Missing credential: set {role_u}_PRIVATE_KEY "
+            f"(inline PEM) or {role_u}_PRIVATE_KEY_PATH (path to .pem file)"
         )
     return load_pem_private_key(Path(key_path).read_bytes(), password=None)
 
@@ -122,7 +122,7 @@ def _discover_installation_id(jwt_token: str, target_repo: str) -> str:
     """Find the installation ID for target_repo (owner/repo) using the App JWT."""
     if not target_repo or "/" not in target_repo:
         raise RuntimeError(
-            "Cannot discover installation ID: set GITHUB_APP_INSTALLATION_ID_{ROLE} "
+            "Cannot discover installation ID: set {ROLE}_INSTALLATION_ID "
             "or TARGET_REPO (owner/repo) environment variable."
         )
     owner, repo = target_repo.split("/", 1)
@@ -152,7 +152,7 @@ def get_token(
         env_file:    Path to a .env file to load before resolving credentials.
                      Defaults to .env in the current working directory.
         target_repo: "owner/repo" used to discover the installation ID if
-                     GITHUB_APP_INSTALLATION_ID_{ROLE} is not set.
+                     {ROLE}_INSTALLATION_ID is not set.
                      Falls back to TARGET_REPO env var.
 
     Returns:
@@ -168,12 +168,12 @@ def get_token(
     load_env(env_path)
 
     role_u = role.upper()
-    app_id = os.environ[f"GITHUB_APP_ID_{role_u}"]
+    app_id = os.environ[f"{role_u}_APP_ID"]
     private_key = _load_private_key(role)
     jwt_token = _sign_jwt(app_id, private_key)
 
     # Resolve installation ID.
-    install_id = os.environ.get(f"GITHUB_APP_INSTALLATION_ID_{role_u}")
+    install_id = os.environ.get(f"{role_u}_INSTALLATION_ID")
     if not install_id:
         repo = target_repo or os.environ.get("TARGET_REPO", "")
         install_id = _discover_installation_id(jwt_token, repo)
