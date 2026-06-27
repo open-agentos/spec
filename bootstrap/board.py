@@ -202,6 +202,50 @@ def _create_number_field(token: str, board_id: str, name: str) -> dict[str, Any]
     return {"node_id": node_id, "type": "number"}
 
 
+def _fetch_existing_fields(token: str, board_id: str) -> dict[str, dict[str, Any]]:
+    """Return a map of {field_name: binding_dict} for all fields on the board.
+
+    Used to make field provisioning idempotent: skip creation if a field with
+    the same name already exists, and reuse its node ID instead.
+    """
+    data = _gql(token, """
+        query($projectId: ID!) {
+            node(id: $projectId) {
+                ... on ProjectV2 {
+                    fields(first: 50) {
+                        nodes {
+                            ... on ProjectV2Field {
+                                id
+                                name
+                            }
+                            ... on ProjectV2SingleSelectField {
+                                id
+                                name
+                                options { id name }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    """, {"projectId": board_id})
+    existing: dict[str, dict[str, Any]] = {}
+    for node in data.get("node", {}).get("fields", {}).get("nodes", []):
+        name = node.get("name")
+        if not name:
+            continue
+        if "options" in node:
+            option_map = {opt["name"]: opt["id"] for opt in node.get("options", [])}
+            existing[name] = {
+                "node_id": node["id"],
+                "type": "single_select",
+                "options": option_map,
+            }
+        else:
+            existing[name] = {"node_id": node["id"], "type": "number"}
+    return existing
+
+
 # ---------------------------------------------------------------------------
 # Public provisioner
 # ---------------------------------------------------------------------------
@@ -267,6 +311,12 @@ def provision_board(
 
         result.board_id = board_id
 
+        # Fetch existing fields so we can skip any already created (idempotent apply).
+        log.info("Fetching existing fields on board %s…", board_id)
+        existing_fields = _fetch_existing_fields(token, board_id)
+        if existing_fields:
+            log.info("  Found %d existing field(s): %s", len(existing_fields), list(existing_fields))
+
         # Provision fields.
         field_bindings: dict[str, Any] = {}
         # GitHub Projects v2 creates these built-in fields on every board;
@@ -286,6 +336,11 @@ def provision_board(
                     f"(built-in fields: {', '.join(sorted(RESERVED_FIELD_NAMES))}). "
                     f"Rename it in agentOS.yaml — e.g. 'Status' → 'Agent Status'."
                 )
+            # Idempotent: reuse the existing field if it was already created.
+            if name in existing_fields:
+                log.info("  -> field '%s' already exists (%s) — skipping", name, existing_fields[name]["node_id"])
+                field_bindings[name] = existing_fields[name]
+                continue
             try:
                 if ftype == "single_select":
                     options = field_def.get("options", [])
