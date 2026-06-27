@@ -248,6 +248,12 @@ def register_apps(
     print(f"\nagentOS setup — {len(to_register)} GitHub App(s) to create")
     print(f"  target:   {target_desc}")
     print(f"  env file: {env_file}")
+    if not org:
+        print(
+            "\n  ⚠ Warning: creating Apps under your personal account.\n"
+            "    Pass --org <org> (or --repo org/repo) to create org-level Apps.",
+            file=sys.stderr,
+        )
     print(
         "\nFor each role you will:\n"
         "  • Open a GitHub URL and fill in a short form\n"

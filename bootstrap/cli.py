@@ -163,11 +163,20 @@ def cmd_setup(args: argparse.Namespace) -> int:
     spec = _load_spec(Path(args.spec))
     _load_env(Path(args.env))
 
+    # Infer org from --repo (owner/repo) when --org is not provided.
+    org = args.org
+    if not org and args.repo and "/" in args.repo:
+        owner = args.repo.split("/", 1)[0]
+        # Treat the owner as the org (orgs and users share the namespace;
+        # we default to org-level app creation which also works for users).
+        org = owner
+        log.info("Inferred org '%s' from --repo %s", org, args.repo)
+
     from bootstrap.apps import register_apps
     results = register_apps(
         spec=spec,
         env_file=Path(args.env),
-        org=args.org,
+        org=org,
         roles=args.role or None,
         app_name_prefix=args.prefix,
     )
