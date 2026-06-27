@@ -122,6 +122,13 @@ jobs:
           echo "GITHUB_TOKEN=$AGENT_TOKEN" >> "$GITHUB_ENV"
 
       # -----------------------------------------------------------------------
+      # Install Claude Code CLI (required on ubuntu-latest runners)
+      # -----------------------------------------------------------------------
+      - name: Install Claude CLI
+        if: env.AGENT_ROLE != 'skip'
+        run: npm install -g @anthropic-ai/claude-code
+
+      # -----------------------------------------------------------------------
       # Run the agent ({{AGENT_RUNNER}} is replaced at install time)
       # -----------------------------------------------------------------------
       - name: Run agent
@@ -135,6 +142,7 @@ jobs:
           LLM_MODEL: ${{ env.LLM_MODEL }}
           AGENT_MAX_TURNS: ${{ env.AGENT_MAX_TURNS }}
           LLM_API_KEY: ${{ env.LLM_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # ---------------------------------------------------------------------------
   # post-run-receipt — calls run-receipt.yml after orchestrate finishes
@@ -155,6 +163,8 @@ jobs:
     name: Apply status:done on close
     runs-on: ubuntu-latest
     if: github.event_name == 'issues' && github.event.action == 'closed'
+    permissions:
+      issues: write
 
     steps:
       - name: Apply status:done label
@@ -163,6 +173,12 @@ jobs:
         run: |
           gh issue edit ${{ github.event.issue.number }} \
             --add-label "status:done" \
+            --remove-label "status:todo" \
+            --remove-label "status:in-progress" \
+            --remove-label "status:in-review" \
+            --remove-label "status:approved" \
+            --remove-label "status:changes-requested" \
+            --remove-label "status:blocked" \
             --repo "${{ github.repository }}"
 
   # ---------------------------------------------------------------------------

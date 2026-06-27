@@ -118,7 +118,7 @@ agents:
 #   AGENT_MAX_TURNS, OPS_REPO, OPS_REPO_TOKEN
 # ============================================================
 runtime:
-  runner: "hermes run"           # Replace with your agent runner
+  runner: "cat agents/$AGENT_ROLE/AGENT.md | claude -p --dangerously-skip-permissions --output-format json --max-turns $AGENT_MAX_TURNS"  # Replace with your agent runner
   max_turns_default: 40
   branch_convention: "agent/{role}/{issue_number}-{slug}"
   receipt_comment_marker: "<!-- agentOS:run-receipt -->"
