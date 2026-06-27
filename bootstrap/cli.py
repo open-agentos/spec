@@ -112,8 +112,12 @@ def cmd_init(args: argparse.Namespace) -> int:
         dest.write_text(content, encoding="utf-8")
         print(f"Wrote {dest}")
     else:
-        # Copy the bundled agentOS.yaml from the spec repo itself.
-        bundled = Path(__file__).resolve().parent.parent / "agentOS.yaml"
+        # Copy the bundled agentOS.yaml — stored inside the bootstrap package
+        # directory so it is always present after a pip install.
+        bundled = Path(__file__).resolve().parent / "agentOS.yaml"
+        if not bundled.exists():
+            # Fallback: check the repo root (editable / source installs)
+            bundled = Path(__file__).resolve().parent.parent / "agentOS.yaml"
         if bundled.exists():
             content = bundled.read_text(encoding="utf-8")
         else:

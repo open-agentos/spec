@@ -31,7 +31,11 @@ from bootstrap.workflows import copy_agent_scaffold, copy_workflows
 
 log = logging.getLogger(__name__)
 
-SPEC_REPO_ROOT = Path(__file__).resolve().parent.parent
+# Templates and schema are bundled inside the bootstrap package directory
+# (bootstrap/templates/ and bootstrap/schema/) so they are always present
+# after a pip install without needing the source tree on disk.
+_BOOTSTRAP_DIR = Path(__file__).resolve().parent
+_BUNDLED_TEMPLATES = _BOOTSTRAP_DIR / "templates"
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +134,7 @@ def _step_board(spec: dict, opts: ApplyOptions, state: BootstrapState) -> StepOu
 
 
 def _step_workflows(spec: dict, opts: ApplyOptions, state: BootstrapState) -> StepOutcome:
-    templates_dir = opts.templates_dir or (SPEC_REPO_ROOT / "templates")
+    templates_dir = opts.templates_dir or _BUNDLED_TEMPLATES
     target_dir = opts.target_dir or Path.cwd()
     result = copy_workflows(
         spec=spec,
@@ -150,7 +154,7 @@ def _step_workflows(spec: dict, opts: ApplyOptions, state: BootstrapState) -> St
 
 
 def _step_scaffold(spec: dict, opts: ApplyOptions, state: BootstrapState) -> StepOutcome:
-    templates_dir = opts.templates_dir or (SPEC_REPO_ROOT / "templates")
+    templates_dir = opts.templates_dir or _BUNDLED_TEMPLATES
     target_dir = opts.target_dir or Path.cwd()
     result = copy_agent_scaffold(
         spec=spec,

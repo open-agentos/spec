@@ -1,0 +1,75 @@
+# =============================================================================
+# Agent Settlement — closes out a merged PR on the project board
+# =============================================================================
+
+name: Agent Settlement
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # settle — runs projector settlement logic after a PR is closed/merged
+  # ---------------------------------------------------------------------------
+  settle:
+    name: Settle PR on project board
+    runs-on: ubuntu-latest
+
+    env:
+      TARGET_REPO: ${{ secrets.TARGET_REPO || github.repository }}
+      BOARD_ID: ${{ secrets.BOARD_ID || vars.BOARD_ID }}
+      OPS_REPO: ${{ secrets.OPS_REPO || vars.OPS_REPO }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install script dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Set PR number
+        run: echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Mint a watcher-scoped token for read access across repos
+      # -----------------------------------------------------------------------
+      - name: Mint watcher token
+        env:
+          WATCHER_APP_ID: ${{ secrets.WATCHER_APP_ID }}
+          WATCHER_PRIVATE_KEY: ${{ secrets.WATCHER_PRIVATE_KEY }}
+        run: |
+          WATCHER_TOKEN=$(python3 scripts/github_token.py watcher)
+          echo "::add-mask::$WATCHER_TOKEN"
+          echo "GITHUB_TOKEN=$WATCHER_TOKEN" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Mint a board-scoped token for Projects v2 mutations
+      # -----------------------------------------------------------------------
+      - name: Mint board token
+        env:
+          BOARD_APP_ID: ${{ secrets.BOARD_APP_ID }}
+          BOARD_PRIVATE_KEY: ${{ secrets.BOARD_PRIVATE_KEY }}
+        run: |
+          BOARD_TOKEN=$(python3 scripts/github_token.py board)
+          echo "::add-mask::$BOARD_TOKEN"
+          echo "BOARD_TOKEN=$BOARD_TOKEN" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Run settlement — updates board status, links PR, archives card
+      # -----------------------------------------------------------------------
+      - name: Run projector settlement
+        run: |
+          python3 scripts/projector.py --settle --pr "$PR_NUMBER"
+        env:
+          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+          BOARD_TOKEN: ${{ env.BOARD_TOKEN }}
+          TARGET_REPO: ${{ env.TARGET_REPO }}
+          BOARD_ID: ${{ env.BOARD_ID }}
+          OPS_REPO: ${{ env.OPS_REPO }}

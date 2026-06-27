@@ -51,7 +51,11 @@ where = ["."]
 include = ["bootstrap*"]
 
 [tool.setuptools.package-data]
-"bootstrap" = ["*.yaml", "*.json"]
+"bootstrap" = [
+    "agentOS.yaml",
+    "templates/**/*",
+    "schema/**/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

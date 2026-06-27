@@ -1,0 +1,317 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/open-agentos/spec/schema/agentOS.schema.json",
+  "title": "GitHub AgentOS Spec",
+  "description": "Schema for agentOS.yaml — the portable configuration file for label-driven multi-agent orchestration on GitHub.",
+  "type": "object",
+  "required": ["specVersion", "specId", "metadata", "agents", "runtime", "labels", "board", "metrics"],
+  "additionalProperties": false,
+
+  "properties": {
+
+    "specVersion": {
+      "type": "string",
+      "description": "Semantic version of this spec file. Bump minor for backwards-compatible additions; major for breaking changes.",
+      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9._-]+)?$",
+      "examples": ["1.0", "1.1", "2.0-draft"]
+    },
+
+    "specId": {
+      "type": "string",
+      "description": "Stable identifier for this spec. Used for dependency pinning.",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "examples": ["github-agentOS"]
+    },
+
+    "metadata": {
+      "type": "object",
+      "required": ["name", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "homepage": { "type": "string", "format": "uri" },
+        "license": { "type": "string" },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "url": { "type": "string", "format": "uri" }
+            }
+          }
+        }
+      }
+    },
+
+    "agents": {
+      "type": "array",
+      "description": "Agent role definitions. Each role maps to a GitHub App identity and a set of status labels that trigger it.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "description": "Unique role identifier. Used as label suffix (agent:{id}), branch prefix, env var name."
+          },
+          "description": { "type": "string" },
+          "create_app": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, bootstrap registers a dedicated GitHub App for this role."
+          },
+          "reuse_app": {
+            "type": "string",
+            "description": "ID of another agent whose GitHub App credentials this role shares. Mutually exclusive with create_app: true."
+          },
+          "permissions": {
+            "type": "object",
+            "description": "GitHub App permission scopes. Values: read | write.",
+            "additionalProperties": {
+              "type": "string",
+              "enum": ["read", "write"]
+            }
+          },
+          "triggers": {
+            "type": "array",
+            "description": "Status labels that cause this agent to be dispatched. Format: '{axis}:{value}'.",
+            "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$" }
+          },
+          "branch_prefix": {
+            "type": "string",
+            "description": "Git branch prefix for this role. Empty string means role does not open branches."
+          }
+        }
+      }
+    },
+
+    "runtime": {
+      "type": "object",
+      "required": ["runner"],
+      "additionalProperties": false,
+      "properties": {
+        "runner": {
+          "type": "string",
+          "description": "Shell command used to invoke the agent. Receives env vars per SPEC.md §5.",
+          "examples": ["hermes run", "claude", "codex", "./scripts/run_agent.sh"]
+        },
+        "max_turns_default": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 40,
+          "description": "Default max turns if not overridden by board field."
+        },
+        "branch_convention": {
+          "type": "string",
+          "description": "Branch naming pattern. Must contain {role} and {issue_number}.",
+          "default": "agent/{role}/{issue_number}-{slug}"
+        },
+        "receipt_comment_marker": {
+          "type": "string",
+          "description": "HTML comment marker used to identify run receipt comments.",
+          "default": "<!-- agentOS:run-receipt -->"
+        }
+      }
+    },
+
+    "labels": {
+      "type": "array",
+      "description": "Label axis definitions. Each axis groups related labels under a shared prefix.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["axis", "values"],
+        "additionalProperties": false,
+        "properties": {
+          "axis": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "description": "Axis name. Labels are named '{axis}:{value}'."
+          },
+          "description": { "type": "string" },
+          "values": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["name", "color"],
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Label value. Full label name will be '{axis}:{name}'."
+                },
+                "color": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{6}$",
+                  "description": "Hex colour code without leading #."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Human-readable description shown in GitHub UI."
+                },
+                "routes_to": {
+                  "type": ["string", "null"],
+                  "description": "Agent role ID that is triggered when this label is applied. Null = informational only."
+                },
+                "auto_add_to_board": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "If true, issues created with this label are automatically added to the Projects v2 board."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "board": {
+      "type": "object",
+      "required": ["enabled", "name", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "visibility": {
+          "type": "string",
+          "enum": ["private", "public"],
+          "default": "private"
+        },
+        "fields": {
+          "type": "array",
+          "description": "Projects v2 field definitions.",
+          "items": {
+            "type": "object",
+            "required": ["name", "type", "flow"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "type": {
+                "type": "string",
+                "enum": ["single_select", "number", "text", "date", "iteration"]
+              },
+              "flow": {
+                "type": "string",
+                "enum": ["metadata", "parameter", "telemetry"],
+                "description": "metadata: set before/during run. parameter: configures run. telemetry: written by runner."
+              },
+              "description": { "type": "string" },
+              "label_map_axis": {
+                "type": "string",
+                "description": "If set, this field is synced from the named label axis. The label value is mapped to an option name."
+              },
+              "default": {
+                "description": "Default value for number fields."
+              },
+              "source": {
+                "type": "string",
+                "enum": ["runner"],
+                "description": "Who writes this field. Only valid for telemetry fields."
+              },
+              "reduce": {
+                "type": "string",
+                "enum": ["latest_settlement", "last_run", "sum_runs", "count_runs"],
+                "description": "How to aggregate values across multiple runs."
+              },
+              "options": {
+                "type": "array",
+                "description": "Options for single_select fields.",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "color"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": { "type": "string" },
+                    "color": {
+                      "type": "string",
+                      "enum": ["GRAY", "BLUE", "GREEN", "YELLOW", "ORANGE", "RED", "PINK", "PURPLE"],
+                      "description": "GitHub Projects v2 colour token."
+                    },
+                    "display": {
+                      "type": "string",
+                      "description": "Optional extended display name / tooltip."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "metrics": {
+      "type": "object",
+      "required": ["enabled", "format", "schema_version"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "format": {
+          "type": "string",
+          "enum": ["jsonl"],
+          "description": "Output format for run records."
+        },
+        "schema_version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Run-record schema version. Increment when adding required fields."
+        },
+        "output_path": {
+          "type": "string",
+          "default": "ops-metrics/",
+          "description": "Directory for JSONL corpus files, relative to repo root."
+        },
+        "retention_months": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3,
+          "description": "How many months of data to keep in active JSONL files."
+        },
+        "events": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["run", "settlement"] }
+        },
+        "required_fields": {
+          "type": "array",
+          "description": "Dot-notation paths that must be present in every run record.",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "plugins": {
+      "type": "array",
+      "description": "Optional plugins applied after core provisioning. Plugins add labels, fields, workflows. They MUST NOT modify core resources.",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["name", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Plugin identifier."
+          },
+          "source": {
+            "type": "string",
+            "description": "Plugin location. Format: 'github:{owner}/{repo}//{path}@{ref}' or 'local:{path}'.",
+            "examples": [
+              "github:open-agentos/spec//plugins/three-questions@v1.0",
+              "local:plugins/my-plugin"
+            ]
+          },
+          "description": { "type": "string" }
+        }
+      }
+    }
+  }
+}
