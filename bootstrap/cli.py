@@ -140,13 +140,14 @@ def cmd_init(args: argparse.Namespace) -> int:
             gitkeep.touch()
     print("Created .agentOS/ scaffold (keys/, logs/, plugins/)")
 
-    # Update .gitignore — add .agentOS/keys/ if not already present
+    # Update .gitignore — add agentOS entries if not already present
     gitignore = Path(".gitignore")
     gitignore_entries = [
         "# agentOS — local secrets and runtime state",
         ".agentOS/keys/",
         ".agentOS/logs/",
         ".agentOS-state.json",
+        "*.pem",  # GitHub App private keys — never commit these
     ]
     existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
     additions = [e for e in gitignore_entries if e not in existing]

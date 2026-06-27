@@ -217,17 +217,12 @@ create all four in one command:
 ### The browser flow
 
 The CLI opens your browser four times in sequence (or once per App if you pass
-`--apps builder,reviewer,watcher,board`). Each browser session lands on the GitHub
-App creation page with all fields pre-filled. You must:
+`--role builder --role reviewer` etc.). For each role the wizard will:
 
-1. Review the permission list shown on the page.
-2. Click "Create GitHub App".
-3. On the next page, click "Generate a private key" — this downloads a .pem file.
-4. Return to the terminal and press Enter when prompted.
-
-The CLI waits for you to press Enter between each App creation. Do not rush through
-the browser steps; if you skip "Generate a private key" you will need to regenerate
-it manually in GitHub Settings.
+1. Print a direct URL to the GitHub App creation page (org or personal).
+2. Print a table of the exact name, permissions, and events to enter.
+3. Prompt you to paste the new App ID.
+4. Prompt you for the path to the `.pem` private key file you downloaded.
 
 ### The four Apps created
 
@@ -244,20 +239,58 @@ it manually in GitHub Settings.
     board     — manages GitHub Projects (v2) board fields and item status
                 Permissions: organization_projects:write, repository_projects:write
 
+### Handling the .pem private key file
+
+When you click "Generate a private key" on a GitHub App page, GitHub downloads a
+`.pem` file to your machine. Here is how to handle it safely:
+
+1. **Do not commit it.** `agentOS init` adds `*.pem` to your `.gitignore`
+   automatically. Double-check with `git status` before committing.
+
+2. **Provide the path when prompted.** The setup wizard asks:
+
+       Path to downloaded .pem file: ~/Downloads/agentOS-builder.2024-01-01.private-key.pem
+
+   The CLI reads the file, converts it to an escaped single-line format, and writes it
+   to your `.env` file as `BUILDER_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\n...`.
+
+3. **Delete the .pem after setup.** Once the credential is stored in `.env` (and
+   later uploaded to GitHub Actions secrets), the local `.pem` file is no longer
+   needed. Delete it:
+
+       rm ~/Downloads/agentOS-builder.*.private-key.pem
+
+4. **Never commit the .env file either.** The `.env` file contains all App credentials
+   inline. Treat it like a password file — keep it local, back it up securely, and
+   never push it to a remote.
+
 ### Where credentials go
 
-After you press Enter for each App, the CLI:
+After you enter the App ID and `.pem` path for each role, the CLI writes to your
+`.env` file:
 
-1. Reads the downloaded .pem from your ~/Downloads directory (or the path you
-   specified with --key-dir).
-2. Writes it to .agentOS/keys/<role>.pem.
-3. Records the App ID in agentOS.yaml under github_apps.<role>.app_id.
-4. Stores the App installation ID after installing the App on your repository
-   (this also happens in the browser; the CLI detects it via the API).
+    BUILDER_APP_ID=123456
+    BUILDER_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\nMIIEo...
 
-The .pem files never leave your machine except when uploaded as GitHub Actions
-secrets in the next step. After `agentOS apply` they are uploaded automatically.
-Never commit them.
+These names match the secrets referenced in the workflow templates
+(`secrets.BUILDER_APP_ID`, `secrets.BUILDER_PRIVATE_KEY`). Upload them to your
+repository's GitHub Actions secrets before running any workflows:
+
+    gh secret set BUILDER_APP_ID --body "$(grep BUILDER_APP_ID .env | cut -d= -f2)"
+    gh secret set BUILDER_PRIVATE_KEY --body "$(grep BUILDER_PRIVATE_KEY .env | cut -d= -f2)"
+
+(Repeat for REVIEWER, WATCHER, and BOARD.)
+
+### Installing each App on your repository
+
+After creating each App, you must install it on the target repository. The setup
+wizard prints the installation URL after each role:
+
+    IMPORTANT: install the app on your target repo:
+      https://github.com/organizations/my-org/settings/apps/agentOS-builder/installations
+
+Open that URL, click "Install", choose your organisation or account, and select
+the target repository. Repeat for all four Apps before running `agentOS apply`.
 
 ---
 
