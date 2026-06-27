@@ -331,8 +331,8 @@ def register_apps(
             continue
 
         write_credentials(role_id, creds, env_file)
-        print(f"  {role_id}: {creds['html_url']}")
-        print(f"  IMPORTANT: install the app on your target repo from the URL above.")
+        print(f"  ✓ {role_id} app registered — App ID: {creds['id']}")
+        print(f"  IMPORTANT: install the app on your target repo: {creds['html_url']}")
         results[role_id] = creds
 
     return results
