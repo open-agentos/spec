@@ -221,6 +221,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         target_dir=target_dir,
         templates_dir=Path(templates_dir_arg) if templates_dir_arg else None,
         to_version=getattr(args, "upgrade_to", None) or None,
+        to_version_explicit=bool(getattr(args, "upgrade_to", None)),
         dry_run=getattr(args, "dry_run", False),
         repo=getattr(args, "repo", None),
         token=_resolve_token("GITHUB_TOKEN"),
@@ -274,6 +275,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
         reset=args.reset,
         only=args.only or None,
         skip=args.skip or None,
+        instrument_only=getattr(args, "instrument", False),
     )
 
     result = apply(spec, opts)
@@ -389,6 +391,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply.add_argument("--reset", action="store_true",
                          help="Reset state file and re-run all steps from scratch")
     # Upgrade flags — active when --upgrade is set.
+    p_apply.add_argument(
+        "--instrument", action="store_true",
+        help=(
+            "Add managed-block markers to already-provisioned files without "
+            "re-running other steps. Safe to run on repos provisioned before v1.1.0."
+        ),
+    )
     p_apply.add_argument(
         "--upgrade", action="store_true",
         help=(

@@ -101,6 +101,7 @@ class UpgradeOptions:
     templates_dir: Optional[Path] = None      # local spec templates/ dir (or fetched)
     from_version: Optional[str] = None        # current spec version (read from agentOS.yaml)
     to_version: Optional[str] = None          # target version (default: latest tag)
+    to_version_explicit: bool = False         # True when --to was passed explicitly
     dry_run: bool = False
     repo: Optional[str] = None               # "owner/repo" for --repo mode (GitHub API)
     token: Optional[str] = None              # GitHub token for --repo mode
@@ -469,16 +470,42 @@ def _fetch_file_from_github(
 
 
 def _resolve_templates_dir(opts: UpgradeOptions) -> Optional[Path]:
-    """Return a local templates/ directory, downloading from GitHub if needed."""
+    """Return a local templates/ directory, downloading from GitHub if needed.
+
+    Resolution order:
+    1. Explicit --templates-dir from opts (must exist).
+    2. importlib.resources — works with pip/pipx installs (including zip-based).
+    3. Path(__file__).parent / "templates" — editable / source installs.
+    4. Repo root / "templates" — running directly from the cloned repo.
+    """
     if opts.templates_dir and opts.templates_dir.exists():
         return opts.templates_dir
 
-    # Try the spec repo bundled inside this package first.
+    # --- 2. importlib.resources (pip/pipx compatible) ---
+    # importlib.resources.files() works with both directory-based and zip-based
+    # package installations. It returns a traversable that can be converted to a
+    # real path via as_file() context manager, but for our purposes we just need
+    # to check existence and return the path.
+    try:
+        from importlib.resources import files as _res_files
+        pkg_templates = _res_files("bootstrap") / "templates"
+        try:
+            # For directory-based installs, str() gives us the real path.
+            tpl_path = Path(str(pkg_templates))
+            if tpl_path.exists() and tpl_path.is_dir():
+                log.debug("Templates found via importlib.resources: %s", tpl_path)
+                return tpl_path
+        except (TypeError, AttributeError):
+            pass
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+    # --- 3. __file__-relative (editable installs) ---
     bundled = Path(__file__).resolve().parent / "templates"
     if bundled.exists():
         return bundled
 
-    # Try the repo root (editable install).
+    # --- 4. Repo root (running from source clone) ---
     repo_root = Path(__file__).resolve().parent.parent
     root_templates = repo_root / "templates"
     if root_templates.exists():
@@ -593,8 +620,21 @@ def run_upgrade(opts: UpgradeOptions) -> UpgradeResult:
     if not to_version:
         to_version = _fetch_latest_tag()
     if not to_version:
-        to_version = result.from_version  # can't determine; treat as no-op
-        log.warning("Could not determine target version — assuming already current")
+        # --to was not provided AND the tag fetch failed.
+        # Never silently no-op — the operator must know something is wrong.
+        if opts.to_version_explicit:
+            # Should not reach here (to_version_explicit means to_version was set),
+            # but guard anyway.
+            result.errors.append("--to version was passed but resolved to empty string.")
+        else:
+            result.errors.append(
+                "Could not determine target version. "
+                "Pass --to VERSION explicitly, or ensure open-agentos/spec has a "
+                "published release tag."
+            )
+        if not opts.dry_run:
+            _write_upgrade_receipt(result, target_dir)
+        return result
     result.to_version = to_version
 
     # ---- 3. Already current? ----
@@ -792,3 +832,146 @@ def wrap_in_managed_block(
         attrs.update(extra_attrs)
     attrs["hash"] = _sha256_short(inner)
     return build_begin_marker(attrs) + inner + MANAGED_END
+
+
+# ---------------------------------------------------------------------------
+# Instrumentation — add managed-block markers to already-provisioned files
+# ---------------------------------------------------------------------------
+
+@dataclass
+class InstrumentResult:
+    """Result of an instrument run."""
+    files_instrumented: list[str] = field(default_factory=list)
+    files_skipped: list[str] = field(default_factory=list)  # already have markers
+    files_missing: list[str] = field(default_factory=list)  # not present in target
+    errors: list[str] = field(default_factory=list)
+    dry_run: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return len(self.errors) == 0
+
+    def print_summary(self) -> None:
+        label = "[dry-run] " if self.dry_run else ""
+        print(f"\n{label}Instrument summary:")
+        if self.files_instrumented:
+            print(f"  Instrumented ({len(self.files_instrumented)}):")
+            for f in self.files_instrumented:
+                print(f"    + {f}")
+        if self.files_skipped:
+            print(f"  Already instrumented ({len(self.files_skipped)}):")
+            for f in self.files_skipped:
+                print(f"    ~ {f}")
+        if self.files_missing:
+            print(f"  Not present (skipped): {', '.join(self.files_missing)}")
+        if not self.files_instrumented and not self.files_skipped:
+            print("  No managed files found in target directory.")
+        if self.errors:
+            print("  Errors:")
+            for e in self.errors:
+                print(f"    ✗ {e}")
+
+
+def instrument_file(
+    file_path: str,
+    current_content: str,
+    role: str,
+) -> tuple[str, bool]:
+    """Add managed-block markers to a file that has none.
+
+    If the file already contains managed markers, returns (current_content, False)
+    — it is never re-instrumented (idempotent).
+
+    The entire file content becomes the managed block. Content is preserved
+    byte-for-byte inside the markers; nothing is reformatted.
+
+    Args:
+        file_path:        Display path for logging.
+        current_content:  The full current file text.
+        role:             The ``role=`` value for the managed-block begin marker.
+
+    Returns:
+        (instrumented_content, was_changed)
+        ``was_changed`` is False when the file already had markers.
+    """
+    if MANAGED_BEGIN_RE.search(current_content):
+        log.debug("instrument_file: %s already has managed markers — skipping", file_path)
+        return current_content, False
+
+    # Wrap the entire file content. strip trailing newline before wrapping so
+    # wrap_in_managed_block's padding produces clean \n boundaries.
+    instrumented = wrap_in_managed_block(current_content.rstrip("\n"), role=role) + "\n"
+    log.info("instrument_file: added managed markers to %s (role=%s)", file_path, role)
+    return instrumented, True
+
+
+def instrument_files(
+    target_dir: Path,
+    dry_run: bool = False,
+    managed_files: Optional[list[tuple[str, Optional[str]]]] = None,
+) -> InstrumentResult:
+    """Add managed-block markers to all managed files in target_dir.
+
+    Each file in ``managed_files`` (defaults to ``_MANAGED_FILES``) that:
+    - exists in target_dir, and
+    - does not already have managed-block markers
+
+    is instrumented in place: its entire content becomes the managed block.
+    Files that already have markers are left untouched (idempotent).
+
+    Args:
+        target_dir:    Root of the provisioned target repo.
+        dry_run:       If True, log changes but do not write files.
+        managed_files: Override the list of (target_rel, template_rel) pairs.
+                       Defaults to the module-level ``_MANAGED_FILES``.
+
+    Returns:
+        InstrumentResult with per-file outcomes.
+    """
+    result = InstrumentResult(dry_run=dry_run)
+    scope = managed_files if managed_files is not None else _MANAGED_FILES
+
+    for target_rel, _template_rel in scope:
+        # field-bindings.json is fully regenerated — no marker instrumentation.
+        if _template_rel is None:
+            continue
+
+        target_file = target_dir / target_rel
+
+        if not target_file.exists():
+            log.debug("instrument_files: %s not present — skipping", target_rel)
+            result.files_missing.append(target_rel)
+            continue
+
+        try:
+            current_content = target_file.read_text(encoding="utf-8")
+        except Exception as exc:
+            result.errors.append(f"Could not read {target_rel}: {exc}")
+            continue
+
+        # Infer role from the first path segment of the target (e.g. "builder"
+        # from "agents/builder/AGENT.md"). Fall back to the file stem.
+        parts = Path(target_rel).parts
+        role = parts[1] if len(parts) > 1 else Path(target_rel).stem
+
+        try:
+            instrumented, changed = instrument_file(
+                file_path=target_rel,
+                current_content=current_content,
+                role=role,
+            )
+        except Exception as exc:
+            result.errors.append(f"Could not instrument {target_rel}: {exc}")
+            continue
+
+        if not changed:
+            result.files_skipped.append(target_rel)
+        else:
+            result.files_instrumented.append(target_rel)
+            if not dry_run:
+                try:
+                    target_file.write_text(instrumented, encoding="utf-8")
+                except Exception as exc:
+                    result.errors.append(f"Could not write {target_rel}: {exc}")
+
+    return result

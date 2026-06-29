@@ -1,0 +1,15 @@
+# MANIFEST.in — Ensure non-Python data files are included in source distributions.
+# Setuptools handles package-data for wheels; this file covers sdist.
+
+# Include all template files (YAML, Markdown, config examples).
+recursive-include bootstrap/templates *
+recursive-include bootstrap/schema *
+
+# Include the bundled spec config.
+include bootstrap/agentOS.yaml
+
+# Project metadata.
+include README.md
+include CHANGELOG.md
+include LICENSE
+include pyproject.toml

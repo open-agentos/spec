@@ -33,7 +33,7 @@ from typing import Any, Optional
 log = logging.getLogger(__name__)
 
 STATE_FILE = ".agentOS-state.json"
-STEP_NAMES = ("labels", "board", "workflows", "scaffold", "apps")
+STEP_NAMES = ("labels", "board", "workflows", "scaffold", "instrument", "apps")
 
 
 def _now() -> str:

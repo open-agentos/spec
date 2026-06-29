@@ -2,11 +2,12 @@
 bootstrap/apply.py — Orchestrates all provisioning steps.
 
 Runs the full agentOS apply sequence against a target GitHub repository:
-  1. labels    — sync all labels from agentOS.yaml
-  2. board     — provision Projects v2 board + fields
-  3. workflows — copy GHA workflow templates
-  4. scaffold  — copy AGENTS.md, agents/, config.yaml.example, ops-metrics/
-  5. apps      — (skipped here; run via `agentOS setup` interactively)
+  1. labels      — sync all labels from agentOS.yaml
+  2. board       — provision Projects v2 board + fields
+  3. workflows   — copy GHA workflow templates
+  4. scaffold    — copy AGENTS.md, agents/, config.yaml.example, ops-metrics/
+  5. instrument  — add managed-block markers to provisioned files (for --upgrade)
+  6. apps        — (skipped here; run via `agentOS setup` interactively)
 
 Progress is tracked in .agentOS-state.json. Re-running resumes from the last
 failed step. Pass --reset to start fresh.
@@ -57,6 +58,7 @@ class ApplyOptions:
     reset: bool = False
     only: Optional[list[str]] = None         # run only these steps
     skip: Optional[list[str]] = None         # skip these steps
+    instrument_only: bool = False            # run only the instrument step
 
 
 @dataclass
@@ -173,6 +175,32 @@ def _step_scaffold(spec: dict, opts: ApplyOptions, state: BootstrapState) -> Ste
         return StepOutcome("failed", errs)
 
 
+def _step_instrument(spec: dict, opts: ApplyOptions, state: BootstrapState) -> StepOutcome:
+    """Add managed-block markers to provisioned files so --upgrade can process them.
+
+    This step is idempotent: files that already have markers are left untouched.
+    Files that were written by the scaffold/workflows steps get their entire
+    spec-owned content wrapped in a managed block with a hash.
+    """
+    from bootstrap.upgrade import instrument_files
+
+    target_dir = opts.target_dir or Path.cwd()
+    result = instrument_files(
+        target_dir=target_dir,
+        dry_run=opts.dry_run,
+    )
+    if result.ok:
+        n = len(result.files_instrumented)
+        s = len(result.files_skipped)
+        detail = f"instrumented={n} already_marked={s} missing={len(result.files_missing)}"
+        state.mark_complete("instrument")
+        return StepOutcome("complete", detail)
+    else:
+        errs = "; ".join(result.errors)
+        state.mark_failed("instrument", errs)
+        return StepOutcome("failed", errs)
+
+
 def _step_apps(_spec: dict, opts: ApplyOptions, state: BootstrapState) -> StepOutcome:
     """Apps are registered interactively via `agentOS setup`, not here."""
     msg = f"run `agentOS setup --repo {opts.repo}` to register GitHub Apps"
@@ -189,6 +217,7 @@ _STEPS = {
     "board": _step_board,
     "workflows": _step_workflows,
     "scaffold": _step_scaffold,
+    "instrument": _step_instrument,
     "apps": _step_apps,
 }
 
@@ -204,6 +233,17 @@ def apply(spec: dict[str, Any], opts: ApplyOptions) -> ApplyResult:
         ApplyResult with per-step outcomes.
     """
     result = ApplyResult()
+
+    # --instrument flag: run only the instrument step, skip everything else.
+    if opts.instrument_only:
+        state_path = opts.state_path or Path(".agentOS-state.json")
+        state = BootstrapState(state_path)
+        state.load()
+        outcome = _step_instrument(spec, opts, state)
+        result.steps["instrument"] = outcome
+        if outcome.status == "failed":
+            result.errors.append(f"instrument: {outcome.detail}")
+        return result
 
     # State tracking.
     state_path = opts.state_path or Path(".agentOS-state.json")
