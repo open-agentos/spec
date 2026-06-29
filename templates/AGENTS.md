@@ -19,18 +19,19 @@ process — the system is entirely event-driven and stateless between runs.
 
 | Role | Triggered by | Can push code? | Notes |
 |---|---|---|---|
-| builder | status:todo, status:changes-requested | Yes | Power role |
+| planner | status:plan | No | In-body planning, issues:write only |
+| builder | status:todo, status:changes-requested | Yes | Power role; gated by approval |
 | reviewer | status:in-review | No (intentional) | Cannot push |
 | watcher | schedule / settlement | No | Minimal footprint |
 | board | PR close | No | Projects v2 only |
 | docs | status:approved (if enabled) | Yes | Reuses builder App |
-| planner | status:planning (if enabled) | Yes | Reuses builder App |
 
 ## State Machine
 
 ```
-status:planning         -> planner
-status:todo             -> builder
+status:plan             -> planner  (writes plan into issue body)
+status:plan-review      -> (no agent; awaiting /approve-plan)
+status:todo             -> builder  (only after approval gate passes)
 status:in-progress      -> (informational)
 status:in-review        -> reviewer
 status:changes-requested -> builder
@@ -38,6 +39,14 @@ status:approved         -> docs (if enabled)
 status:blocked          -> HUMAN
 status:done             -> terminal
 ```
+
+Approval gate: the builder fires on `status:todo` only when an admin has commented
+`/approve-plan` after the latest plan receipt. Applying `status:todo` without a
+valid approval results in no build dispatched (silent skip).
+
+Commands handled by the orchestrator on issue comments:
+- `/approve-plan` — approve plan and dispatch builder (admin only, permission verified live)
+- `/request-changes <notes>` — return to status:plan for revision (admin only)
 
 ## Execution Protocol (Builder)
 

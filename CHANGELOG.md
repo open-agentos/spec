@@ -10,6 +10,75 @@ version. Each major bump ships a corresponding MIGRATION-vN.md in the repo root.
 
 ---
 
+## [1.1.0] — 2026-06-29
+
+Planning stage and dispatch-time approval gate. No breaking changes — all existing
+labels and workflows continue to work. The new planning stage is additive; operators
+on `governance.planning: off` see no behaviour change.
+
+### Added
+
+**Labels (3 new)**
+- `status:plan` — planner entry point; dispatches planner role on label event
+- `status:plan-review` — plan written into body; awaiting admin `/approve-plan`
+- `agent:planner` — ownership label set when planner is running
+
+**agentOS.yaml**
+- `governance:` config block with `planning`, `approvers`, `approve_command`,
+  `changes_command`, `plan_begin_marker`, `plan_end_marker` fields
+- `governance.planning: required` default (zero-config happy path)
+- Planner role definition (uncommented, core, enabled by default);
+  reuses builder App as interim token source with a TODO to split
+- `status:plan` / `status:plan-review` entries in the status axis with `routes_to`
+- `agent:planner` entry in the agent axis
+- Board field options for Plan / Plan review status values and Planner role value
+
+**Orchestrator template**
+- Added `issue_comment: [created]` trigger to `templates/workflows/agent-orchestrator.yml`
+- `plan-orchestrator` job with `concurrency: planner-{issue_number}` group
+- Dispatch-time approval gate (github-script step):
+  - `/approve-plan` command: verifies commenter permission live via GitHub API,
+    checks plan block present, checks approval postdates latest plan receipt;
+    dispatches builder only when all conditions pass
+  - `/request-changes` command: verifies permission, resets to `status:plan`
+  - `status:todo` label guard: silently skips builder dispatch when no valid approval
+- `sync-close-label` updated to remove `status:plan` and `status:plan-review` on close
+
+**Templates**
+- `templates/agents/planner/AGENT.md.template` — full planner role spec:
+  in-body plan writing, marker contract, idempotency rule, status transitions,
+  receipt format, run-record emission
+- `templates/agents/builder/AGENT.md.template` — "Inputs — Plan Consumption" section:
+  plan block detection, authoritative contract rule, fallback to full body
+
+**SPEC.md**
+- Section 3.2: updated state machine diagram with `status:plan` and `status:plan-review`
+- Section 3.3: updated routing table
+- Section 3.6: new normative section — Planning Stage and Dispatch-time Approval:
+  two planning states (§3.6.1), marker contract (§3.6.2), approval semantics (§3.6.3),
+  slash commands (§3.6.4), governance config (§3.6.5), idempotency/concurrency (§3.6.6)
+- Section 4.2: updated planner description
+- Section 11: updated conformance requirements
+- Appendix A: added new label colours (`status:plan`, `status:plan-review`, `agent:planner`)
+- Appendix C: Plan body template (CE-style, with AGENTOS:PLAN:BEGIN/END markers)
+- Appendix D: Approval gate design notes (why live permission, not stored label)
+
+**docs/label-model.md**
+- Updated status label table with `status:plan` and `status:plan-review`
+- New state machine diagram with full planning path
+- Updated routes_to table
+- New "What happens on each transition" entries for `status:plan` and `status:plan-review`
+- Updated `agent:planner` description
+
+**docs/agent-roles.md**
+- Section 7 (planner): complete rewrite — in-body planning, marker contract,
+  permission model, concurrency, manual entry points, receipt format
+- Section 7.1 (new): Dispatch-time approval gate — how approval is verified,
+  why live permission, `/approve-plan` and `/request-changes` semantics,
+  governance config reference
+
+---
+
 ## [1.0.0-alpha] — 2026-06-26
 
 First public release of the GitHub AgentOS Spec. Extracted from the 3qs-ops

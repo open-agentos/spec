@@ -90,35 +90,50 @@ in GitHub Actions. The following diagram shows the core transition graph:
 ```
                       [human creates issue]
                               |
-                              v
-                       status:planning          (optional; triggers planner)
-                              |
-                              v
-                         status:todo            --> builder agent
-                              |
-                    .---------+---------.
-                    |                   |
-                    v                   v
-             status:in-review     status:blocked    (human resolves)
-                    |
-          .---------+---------.
-          |                   |
-          v                   v
-    status:approved    status:changes-requested --> builder agent (retry)
-          |
-          v
-     status:done              (set automatically on PR close / issue close)
+              .---------------+---------------.
+              |                               |
+              v                               v
+       status:plan                      (no planning)
+       (optional; triggers planner)          |
+              |                              |
+              v                              |
+      status:plan-review                     |
+      (awaiting /approve-plan)               |
+              |                              |
+    admin /approve-plan                      |
+    (permission verified live)               |
+              |                              |
+              +------------------------------+
+              |
+              v
+         status:todo            --> builder agent (gated by approval check)
+              |
+    .---------+---------.
+    |                   |
+    v                   v
+status:in-review   status:blocked    (human resolves)
+    |
+.---------+---------.
+|                   |
+v                   v
+status:approved  status:changes-requested --> builder agent (retry)
+    |
+    v
+status:done              (set automatically on PR close / issue close)
 ```
 
 Conforming implementations MUST support at minimum: todo, in-review, changes-requested,
-approved, blocked, done. The planning state is optional (enabled by enabling the planner role).
+approved, blocked, done. The planning states `status:plan` and `status:plan-review` are
+required when the planner is enabled (default). `governance.planning: off` is the only
+mode in which these states are inactive.
 
 ### 3.3 Routing Table
 
 This table defines which agent role is triggered by each status label:
 
-  status:planning          -> planner (if enabled; else no-op)
-  status:todo              -> builder
+  status:plan              -> planner (dispatched on label event; concurrency-guarded)
+  status:plan-review       -> no agent; awaiting /approve-plan from authorised approver
+  status:todo              -> builder (only after approval gate passes; see §3.6)
   status:in-review         -> reviewer
   status:changes-requested -> builder
   status:approved          -> docs (if enabled; else no-op)
@@ -142,6 +157,107 @@ The bootstrap MUST:
 - Update a label's colour if it exists but the colour differs (PATCH)
 - Skip a label if it exists and the colour matches (no-op)
 - NEVER delete labels not in the spec (labels may be user-created)
+
+### 3.6 Planning Stage and Dispatch-time Approval
+
+#### 3.6.1 The two planning states
+
+`status:plan` and `status:plan-review` are first-class, visible status states.
+
+  status:plan
+    Entry point for the planning stage. Applying this label dispatches the planner.
+    The planner fires ONLY on this label — it does not fire on `status:todo`.
+
+  status:plan-review
+    Set by the planner when it has written a plan into the issue body. No agent is
+    dispatched. The issue waits for a human approval command.
+
+Conforming implementations MUST support both states when the planner is enabled.
+
+#### 3.6.2 The marker contract
+
+The plan lives in the issue body between two HTML comment markers:
+
+    <!-- AGENTOS:PLAN:BEGIN -->
+    (plan content, CE-style template)
+    <!-- AGENTOS:PLAN:END -->
+
+Rules:
+  - The planner MUST replace the content between the markers on each run (never append).
+  - Content above the BEGIN marker is the human's original intent and MUST be preserved.
+  - The builder reads the plan block as its authoritative implementation contract.
+  - When no markers are present and planning is `optional` or `off`, the builder uses
+    the full issue body.
+
+#### 3.6.3 Dispatch-time approval semantics
+
+Approval is NOT a label. It is a live permission check performed by the orchestrator
+at the moment of builder dispatch.
+
+A build MUST NOT be dispatched unless ALL of the following conditions hold:
+
+  1. The issue body contains a plan block between the markers.
+     (Requirement waived when `governance.planning` is `optional` or `off`.)
+
+  2. An `/approve-plan` comment exists from a user whose GitHub collaborator
+     permission level (checked live via the GitHub API at dispatch time) is in
+     `governance.approvers`. The check MUST be performed at dispatch, not cached.
+
+  3. That approval comment's `created_at` MUST be later than the timestamp of the
+     most recent plan receipt comment on the issue. A stale approval that predates
+     the current plan revision DOES NOT authorise a build.
+
+Applying `status:todo` without a valid approval comment MUST result in no build
+being dispatched. The orchestrator silently skips the builder dispatch.
+
+#### 3.6.4 Slash commands
+
+The orchestrator listens for `issue_comment` events with these commands:
+
+  /approve-plan
+    Triggers the approval check. If the commenter has an approver-level permission
+    and all build conditions hold, the orchestrator transitions the issue to
+    `status:todo` and dispatches the builder. If the commenter lacks permission,
+    the orchestrator posts a polite refusal and takes no further action.
+
+  /request-changes <notes>
+    Sent by an approver to request plan revisions. The orchestrator transitions
+    the issue back to `status:plan`, which re-triggers the planner. The planner
+    incorporates the notes into the revised plan (they appear as comments on the
+    issue). The orchestrator MUST verify the commenter has approver-level permission
+    before honouring this command.
+
+#### 3.6.5 governance config block
+
+The `governance:` block in agentOS.yaml configures the planning and approval gate:
+
+```yaml
+governance:
+  planning: required          # required | optional | off
+  approvers: [admin]          # GitHub collaborator permission levels
+  approve_command: "/approve-plan"
+  changes_command: "/request-changes"
+  plan_begin_marker: "<!-- AGENTOS:PLAN:BEGIN -->"
+  plan_end_marker:   "<!-- AGENTOS:PLAN:END -->"
+```
+
+  planning: required (default)
+    The planner MUST run and an admin MUST approve before the builder runs.
+
+  planning: optional
+    Issues MAY go straight to `status:todo`. A plan block is not required.
+    An admin approval is still required.
+
+  planning: off
+    Legacy mode. The builder fires on `status:todo` unconditionally. No approval
+    check is performed. `status:plan` and `status:plan-review` have no effect.
+
+#### 3.6.6 Idempotency and concurrency
+
+The orchestrator MUST use a `concurrency:` group keyed on the issue number for the
+planner job. This prevents two planner runs from racing on the same issue. A second
+`status:plan` event cancels the in-flight planner run. This replaces the need for a
+"planner is busy" state label.
 
 ---
 
@@ -184,9 +300,12 @@ Two additional roles are defined in core but disabled by default:
     Triggers on: status:approved, follow-on:docs-needed (if configured)
 
   planner
-    Decomposes complex issues before passing to builder. Reuses the builder GitHub App.
-    Enabled by uncommenting in agentOS.yaml.
-    Triggers on: status:planning
+    Turns a thin human-written issue into a concrete, file-level plan written into the
+    issue body between AGENTOS:PLAN:BEGIN/END markers. Core role, enabled by default.
+    Triggers on: status:plan
+    Permissions needed: issues:write only (currently reuses builder App as a pragmatic
+    shortcut; splitting to a dedicated App with issues:write only is a recommended TODO).
+    See §3.6 for the full planning stage and approval gate specification.
 
 ### 4.3 GitHub App Identity
 
@@ -648,9 +767,13 @@ A deployment is AgentOS-conformant if:
   - All required labels (status:*, agent:*, type:*, review:*, source:*) are present
   - The Projects v2 board has all 10 required fields with correct types
   - The four core GitHub Apps are installed with the specified permission scopes
-  - The orchestrator workflow fires on issue label events and routes per the routing table
+  - The orchestrator workflow fires on issue label events AND issue_comment events
+    and routes per the routing table (§3.3)
+  - The orchestrator enforces the dispatch-time approval gate (§3.6.3) before
+    dispatching the builder on status:todo
   - The settlement workflow fires on PR close and updates the Outcome field
   - Each agent invocation produces a valid v6 run record
+  - The planner role emits run records with identity.role = "planner"
 
 Plugins may extend a conformant deployment without breaking conformance.
 
@@ -661,19 +784,22 @@ Plugins may extend a conformant deployment without breaking conformance.
 These are the canonical label colours used by the core spec. Operators MAY change colours;
 the routing logic is based on label names, not colours.
 
+  status:plan              c5def5   Light blue (planner entry)
+  status:plan-review       e4e669   Yellow (awaiting approval)
   status:todo              ededed   Light gray
   status:in-progress       0075ca   Blue
   status:in-review         fbca04   Yellow
   status:changes-requested d93f0b   Red-orange
   status:approved          0e8a16   Green
   status:blocked           b60205   Dark red
-  status:planning          bfd4f2   Light blue
+  status:planning          bfd4f2   Light blue (legacy; kept for back-compat)
   status:done              0e8a16   Green
 
   agent:builder            1d76db   Blue
   agent:reviewer           cc317c   Pink
   agent:docs               5319e7   Purple
   agent:watcher            0075ca   Blue
+  agent:planner            f9d0c4   Salmon
 
   type:feature             84b6eb   Light blue
   type:bug                 ee0701   Red
@@ -700,3 +826,65 @@ the routing logic is based on label names, not colours.
   AGENT_MAX_TURNS         string    Optional. Integer string.
   OPS_REPO                string    Optional. "owner/ops-repo".
   OPS_REPO_TOKEN          string    Optional. PAT for ops repo.
+
+---
+
+## Appendix C: Plan Body Template (CE-style)
+
+The planner MUST use this template between the AGENTOS:PLAN:BEGIN/END markers.
+The builder reads the content between these markers as its authoritative contract.
+
+```markdown
+<!-- AGENTOS:PLAN:BEGIN -->
+### Plan
+
+**Problem / intent**
+<one-paragraph restatement of what the issue is asking for>
+
+**Context & constraints**
+<relevant existing behaviour, files, invariants, hard constraints>
+
+**Approach**
+<the chosen design, and briefly why over alternatives>
+
+**Task breakdown**
+- [ ] <file-level, ordered, independently checkable step>
+- [ ] <...>
+
+**Acceptance criteria**
+- <observable condition 1>
+
+**Test plan**
+<how each acceptance criterion is verified — commands, smoke steps>
+
+**Risks & open questions**
+- <risk or decision that needs a human>
+
+**Out of scope**
+- <explicitly excluded>
+<!-- AGENTOS:PLAN:END -->
+```
+
+---
+
+## Appendix D: Approval Gate Design Notes
+
+### Why live permission check, not a stored label
+
+An earlier design stored approval in a `review:plan-approved` label and defended it
+with a guard workflow that reverted the label if applied by a non-approver. That
+approach requires: a dedicated guard workflow, a GITHUB_TOKEN loop-prevention caveat
+(to avoid the guard triggering itself), and a label that can still be spoofed by a
+repo admin with direct label access.
+
+The dispatch-time check (§3.6.3) is simpler and stronger:
+- No label to defend, so no guard workflow needed.
+- No loop-prevention caveat.
+- The permission check runs against live GitHub data at the moment of dispatch.
+- Manually labelling an issue to bypass the gate simply results in no build — the
+  orchestrator's check fails silently and the builder is not dispatched.
+
+This appendix documents the reasoning so it is not lost if a future requirement
+(e.g. an approval signal consumed by a system that cannot re-derive it live) ever
+justifies a stored approval token. In that case, see the label+guard pattern
+described in the plan brief's Appendix E.

@@ -343,40 +343,173 @@ reverted as well — agentOS does not currently handle this cascading revert sce
 
 ---
 
-## 7. planner (optional)
+## 7. planner (core, enabled by default)
 
-The planner role decomposes large issues into smaller sub-issues. It is disabled by
-default.
+The planner role turns a thin human-written issue into a concrete, file-level plan
+written directly into the issue body. It sits between the human's initial idea and
+the builder's code implementation, providing an admin-gated checkpoint.
 
-### When to enable
+### Role in the state machine
 
-Enable the planner role when:
+```
+[human applies status:plan]
+        |
+        v
+  planner runs  (concurrency group: issue number)
+        |
+        v
+  status:plan-review  (plan in issue body, awaiting /approve-plan)
+        |
+  admin /approve-plan (permission verified live)
+        |
+        v
+   status:todo  -> builder runs
+```
 
-- Issues frequently require breaking down into multiple PRs.
-- You want the agent to automatically identify scope and create sub-tasks.
-- You have a project manager who creates high-level issues that need decomposition.
+### What the planner does
 
-### Permission reuse
+1. Reads the issue body, title, and all comments (including any `/request-changes`
+   notes from prior review cycles).
+2. Produces a file-level plan using the CE-style template (Appendix C of SPEC.md).
+3. Rewrites the issue body: original human intent preserved above the plan block;
+   the plan inserted/replaced between `<!-- AGENTOS:PLAN:BEGIN -->` and
+   `<!-- AGENTOS:PLAN:END -->` markers. **Never appends a second block — always
+   replaces in place (idempotent).**
+4. Transitions `status:plan` → `status:plan-review`.
+5. Posts a receipt comment summarising the plan and listing `/approve-plan` and
+   `/request-changes`.
+6. Emits a `planner` run-record so planning cost is tracked separately from builder cost.
 
-Like the docs role, the planner reuses the builder GitHub App. It has the same
-permission set.
+### Permissions
 
-Enable it in agentOS.yaml:
+The planner needs `issues:write` only — no code access.
 
-    agents:
-      planner:
-        enabled: true
-        trigger_label: "needs:planning"
-        max_sub_issues: 8
-        prompt: .agentOS/prompts/planner.md
+Target permission: a dedicated GitHub App with `issues:write` only.
+Current default: reuses the builder GitHub App (same token, superset of permissions)
+as a pragmatic starting point. Splitting it out is a TODO item in agentOS.yaml.
 
-### Trigger
+### Plan markers (the marker contract)
 
-The planner fires when the label `needs:planning` is applied. This label is not in
-the core label model; you must add it either via plugin or by adding it to your
-agentOS.yaml labels section. The planner creates sub-issues with source:agent and
-immediately applies status:todo to each, which starts the builder cycle for each
-sub-issue.
+The plan lives in the issue body between two HTML comment markers:
+
+    <!-- AGENTOS:PLAN:BEGIN -->
+    ... plan content (CE-style template) ...
+    <!-- AGENTOS:PLAN:END -->
+
+Rules:
+- The planner MUST replace the content between the markers on each run, never append.
+- Content above the BEGIN marker is the human's original intent — preserved verbatim.
+- Content below the END marker may include review history or other notes.
+- The builder reads the plan from between the markers as its authoritative contract.
+- If no markers are present (planning is `optional`/`off`), the builder uses the
+  full issue body.
+
+### Concurrency
+
+A `concurrency:` group keyed on `planner-{issue_number}` prevents two planner runs
+from racing on the same issue. The second run cancels the first. This replaces a
+`status:planning` busy-state: the state machine does not need an extra "planner is
+running" label.
+
+### Manual entry points (no planner needed)
+
+An operator with the plan ready can skip the planner entirely:
+
+**Review-me-first** (author writes the plan manually):
+  1. Write the plan in the body between the markers.
+  2. Open or label the issue at `status:plan-review`.
+  3. `/approve-plan` as an admin.
+  4. Builder dispatches.
+
+**Trust-me (admin)** (apply status:todo directly):
+  1. Write the plan in the body between the markers.
+  2. Apply `status:todo`.
+  3. `/approve-plan` as an admin. (The build only proceeds once the approval
+     lands — applying `status:todo` alone never triggers an unapproved build.)
+
+### Receipt format
+
+```
+<!-- agentOS:run-receipt -->
+**Plan Receipt** | Role: planner | Status: success | Issue: #N
+
+Plan is ready for review. Summary:
+<2–3 sentence summary>
+
+An admin can:
+- `/approve-plan` — approve and dispatch builder.
+- `/request-changes <notes>` — send back for revision.
+<!-- /agentOS:run-receipt -->
+```
+
+---
+
+## 7.1 Dispatch-time approval gate
+
+The approval gate is a security check performed by the orchestrator **at the moment
+of dispatch** — not a label to be stored and defended.
+
+### How approval is verified
+
+When the orchestrator encounters either a `status:todo` label event or an
+`/approve-plan` comment, it runs the following checks live:
+
+1. **Plan block present** — the issue body contains content between
+   `<!-- AGENTOS:PLAN:BEGIN -->` and `<!-- AGENTOS:PLAN:END -->`.
+   (Skipped when `governance.planning` is `optional` or `off`.)
+
+2. **Valid approver** — at least one `/approve-plan` comment exists from a user
+   whose GitHub collaborator permission level is in `governance.approvers` (default:
+   `[admin]`). Permission is checked live via
+   `GET /repos/{owner}/{repo}/collaborators/{username}/permission` at the moment of
+   the check — not cached.
+
+3. **Approval postdates the plan** — the approval comment's `created_at` is later
+   than the timestamp of the most recent plan receipt comment. This ensures a
+   stale approval (predating a plan revision) does not authorise a build.
+
+### Why live permission, not a label
+
+Storing approval in a label (e.g. `review:plan-approved`) requires a guard workflow
+to defend it — any label can be manually applied by anyone with triage access. The
+live permission check has no label to defend, requires no guard workflow, and cannot
+be spoofed by label manipulation.
+
+### What `/approve-plan` does
+
+When an admin comments `/approve-plan` on an issue at `status:plan-review`:
+
+1. Orchestrator checks the commenter's permission (live API call).
+2. Orchestrator checks that all three conditions above hold.
+3. If all pass:
+   a. Removes `status:plan-review`, applies `status:todo`.
+   b. Posts an approval receipt comment.
+   c. Dispatches the builder immediately (same workflow run).
+4. If the commenter isn't an approver: posts a polite refusal, no build.
+5. If any condition fails: posts an explanation, no build.
+
+### What `/request-changes` does
+
+When an admin comments `/request-changes <notes>` on an issue at `status:plan-review`:
+
+1. Orchestrator verifies the commenter is an approver.
+2. Removes `status:plan-review`, applies `status:plan`.
+3. The `status:plan` label event fires the orchestrator again, which dispatches the
+   planner (this time incorporating the notes into the revised plan).
+
+### governance config
+
+```yaml
+governance:
+  planning: required          # required | optional | off
+  approvers: [admin]          # collaborator permission levels
+  approve_command: "/approve-plan"
+  changes_command: "/request-changes"
+```
+
+With `planning: off`, the builder fires on `status:todo` unconditionally (legacy
+behaviour). With `planning: optional`, issues may go directly to `status:todo` and
+build without a plan block; an approval is still required.
 
 ---
 

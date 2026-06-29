@@ -66,14 +66,64 @@ primary mechanism by which agents hand off work to each other.
 
     Label                   Hex Colour   Description
     ----------------------  -----------  -----------------------------------------------
-    status:todo             0075ca       Ready to be picked up by the orchestrator.
-    status:in-progress      e4e669       Builder agent is actively working on this issue.
+    status:plan             c5def5       Expand this issue into a plan (planner entry).
+    status:plan-review      e4e669       Plan written; awaiting admin /approve-plan.
+    status:todo             ededed       Ready to be picked up by the orchestrator.
+    status:in-progress      0075ca       Builder agent is actively working on this issue.
     status:in-review        0052cc       PR is open; reviewer agent is evaluating it.
     status:approved         0e8a16       Reviewer approved; ready for merge or docs/planner.
     status:changes-requested  b60205     Reviewer requested changes; builder must iterate.
     status:blocked          d93f0b       Human attention required; no agent will touch it.
     status:merged           6f42c1       PR was merged; watcher runs settlement.
     status:closed           cfd3d7       Issue closed without merge (cancelled, duplicate).
+
+### State machine (with planning stage)
+
+```
+[human applies status:plan]
+         |
+         v
+   planner runs        (concurrency group: issue number — prevents parallel runs)
+         |
+         v
+  status:plan-review   (plan written between AGENTOS:PLAN:BEGIN/END markers)
+         |
+  admin comments /approve-plan    (permission verified live at dispatch time)
+         |
+         v
+    status:todo  ──────────────────────────────────────────────────────────┐
+         |                                                                  |
+         v                                          manual entry (trust-me admin):
+   builder runs   ◄──────────────────────────────  author plan in markers,
+         |                                          apply status:todo, then
+         |                                          /approve-plan
+         ├──────────────────────┐
+         v                      v
+  status:in-review        status:blocked    (human resolves)
+         |
+    .----+----.
+    |         |
+    v         v
+status:     status:changes-requested ──► builder (retry)
+approved
+    |
+    v
+ status:done
+
+Manual review-me-first path:
+  author plan in markers → open at status:plan-review → admin /approve-plan → status:todo → builder
+```
+
+Notes:
+- `status:plan` is the planner entry point. Applying it fires the planner.
+- `status:plan-review` means "plan written; no agent dispatch — awaiting human."
+- The builder fires on `status:todo` only when the orchestrator confirms a valid
+  `/approve-plan` from an authorised approver that postdates the latest plan.
+  Applying `status:todo` without that approval is a no-op (no build dispatched).
+- `governance.planning: optional` lets issues skip planning and go straight to
+  `status:todo` + `/approve-plan`.
+- `governance.planning: off` restores legacy behaviour (builder fires on `status:todo`
+  unconditionally; no approval check).
 
 ### routes_to configuration
 
@@ -83,7 +133,7 @@ orchestrator which agent role to dispatch when that label is applied:
     labels:
       status:
         todo:
-          routes_to: builder
+          routes_to: builder        # gated: builder only fires after approval check (see §2 notes)
         in-review:
           routes_to: reviewer
         approved:
@@ -96,11 +146,32 @@ orchestrator which agent role to dispatch when that label is applied:
           routes_to: watcher       # settlement
         closed:
           routes_to: watcher       # settlement (no-op outcome)
+        plan:
+          routes_to: planner       # planner fires on this label
+        plan-review:
+          routes_to: null          # no agent; awaiting human /approve-plan
 
 `routes_to: null` means the orchestrator acknowledges the transition but does not
 dispatch any agent. A human or a protected-branch merge event moves the issue onward.
 
 ### What happens on each transition
+
+status:plan
+  The issue has been opted into the planning stage. Applying this label fires the
+  orchestrator, which dispatches the planner role. The planner reads the issue body,
+  generates a concrete file-level plan using the CE-style template, rewrites the body
+  so the original intent is preserved at the top and the plan sits between
+  `<!-- AGENTOS:PLAN:BEGIN -->` and `<!-- AGENTOS:PLAN:END -->` markers, then
+  transitions to `status:plan-review`. A concurrency group keyed on the issue number
+  prevents two planner runs from overlapping on the same issue.
+
+status:plan-review
+  The planner has written a plan into the issue body and the issue is awaiting human
+  review. No agent is dispatched on this status. An authorised approver (default:
+  admin) reviews the plan and comments `/approve-plan` to proceed, or
+  `/request-changes <notes>` to send the issue back to `status:plan` for a revised
+  plan. The orchestrator also watches for `issue_comment` events so it can act on
+  these commands in real time.
 
 status:todo
   The issue is in the backlog and ready for automation. Applying this label (while a
@@ -158,7 +229,7 @@ and is NOT used as a workflow trigger.
     agent:reviewer    The reviewer role is currently evaluating this issue.
     agent:watcher     The watcher is running settlement on this issue.
     agent:docs        The docs agent is updating documentation.
-    agent:planner     The planner is decomposing this issue into sub-issues.
+    agent:planner     The planner is writing a plan into the issue body.
 
 ### When agent labels are set
 
