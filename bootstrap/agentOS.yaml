@@ -3,12 +3,12 @@
 # Human-readable, git-diffable, versioned.
 #
 # Import this file into your project with:
-#   agentOS init --from github:open-agentos/spec@v1.0
+#   agentOS init --from github:open-agentos/spec@v1.1.0
 #
 # Then provision your repository with:
 #   agentOS apply --repo owner/my-repo
 
-specVersion: "1.0"
+specVersion: "1.1"
 specId: "github-agentOS"
 
 metadata:
@@ -94,14 +94,21 @@ agents:
   #     - status:approved
   #   branch_prefix: "agent/docs/"
 
-  # - id: planner
-  #   description: >
-  #     Decomposes complex issues before passing to builder. Reuses builder App.
-  #   create_app: false
-  #   reuse_app: builder
-  #   triggers:
-  #     - status:planning
-  #   branch_prefix: "agent/planner/"
+  - id: planner
+    description: >
+      Expands a thin issue into a concrete, file-level plan written between
+      <!-- AGENTOS:PLAN:BEGIN/END --> markers in the issue body. Runs on
+      status:plan. Needs issues:write only — no code access.
+      NOTE: If provisioning a fifth GitHub App is too heavyweight, run this role
+      under an issues-scoped builder token and split it out later (see TODO below).
+      TODO: provision a dedicated Planner GitHub App with issues:write only.
+    create_app: false
+    reuse_app: builder          # Temporary — replace with create_app: true once dedicated App is provisioned
+    permissions:
+      issues: write             # Sufficient: reads issue body/comments, writes body and comment
+    triggers:
+      - status:plan
+    branch_prefix: ""           # Planner does not open branches
 
 # ============================================================
 # RUNTIME
@@ -118,10 +125,37 @@ agents:
 #   AGENT_MAX_TURNS, OPS_REPO, OPS_REPO_TOKEN
 # ============================================================
 runtime:
-  runner: "hermes run"           # Replace with your agent runner
+  runner: "cat agents/$AGENT_ROLE/AGENT.md | claude -p --dangerously-skip-permissions --output-format json --max-turns $AGENT_MAX_TURNS"  # Replace with your agent runner
   max_turns_default: 40
   branch_convention: "agent/{role}/{issue_number}-{slug}"
   receipt_comment_marker: "<!-- agentOS:run-receipt -->"
+
+# ============================================================
+# GOVERNANCE
+# Controls the planning stage and approval gate that sit in
+# front of the builder. All fields have happy-path defaults;
+# zero config is needed to run with planning required.
+# ============================================================
+governance:
+  # required  — status:plan must be applied and a plan approved before builder runs.
+  # optional  — issues may go straight to status:todo and build without a plan.
+  # off       — planning disabled entirely; legacy builder behaviour.
+  planning: required
+
+  # Collaborator permission levels whose /approve-plan comments authorise a build.
+  # GitHub permission levels: admin, maintain, write, triage, read.
+  approvers: [admin]
+
+  # Slash-command the orchestrator listens for to approve a plan.
+  approve_command: "/approve-plan"
+
+  # Slash-command that sends an issue back to status:plan for replanning.
+  changes_command: "/request-changes"
+
+  # Marker pair used to delimit the plan block in the issue body.
+  # The planner MUST replace content between these markers on each run (never append).
+  plan_begin_marker: "<!-- AGENTOS:PLAN:BEGIN -->"
+  plan_end_marker: "<!-- AGENTOS:PLAN:END -->"
 
 # ============================================================
 # LABELS
@@ -165,10 +199,15 @@ labels:
         description: "Cannot proceed without human intervention"
         routes_to: null           # Human resolves
 
-      - name: planning
-        color: "bfd4f2"
-        description: "Needs decomposition before builder can start"
-        routes_to: null           # planner role handles this if enabled
+      - name: plan
+        color: "c5def5"
+        description: "Expand this issue into a plan (planner entry point)"
+        routes_to: planner        # Dispatches planner on label applied
+
+      - name: plan-review
+        color: "e4e669"
+        description: "Plan written into body; awaiting admin /approve-plan"
+        routes_to: null           # No agent; human approval required
 
       - name: done
         color: "0e8a16"
@@ -194,6 +233,10 @@ labels:
       - name: watcher
         color: "0075ca"
         description: "Watcher agent is the current owner"
+
+      - name: planner
+        color: "f9d0c4"
+        description: "Planner agent is the current owner"
 
   # ---- TYPE AXIS — ISSUE CLASSIFICATION ----
   - axis: type
@@ -276,6 +319,8 @@ board:
           color: GREEN
         - name: Watcher
           color: PURPLE
+        - name: Planner
+          color: PINK
 
     - name: Agent Status
       type: single_select
@@ -295,6 +340,12 @@ board:
           color: GREEN
         - name: Blocked
           color: RED
+        - name: Planning
+          color: BLUE
+        - name: Plan
+          color: BLUE
+        - name: Plan review
+          color: YELLOW
         - name: Done
           color: PURPLE
 
@@ -426,5 +477,5 @@ plugins: []
 # Example — uncomment to activate the reference 3Qs plugin:
 # plugins:
 #   - name: three-questions
-#     source: github:open-agentos/spec//plugins/three-questions@v1.0
+#     source: github:open-agentos/spec//plugins/three-questions@v1.1.0
 #     description: "Daily 3Qs intelligence plugin — phase labels, watcher schedule"

@@ -16,6 +16,20 @@ Planning stage and dispatch-time approval gate. No breaking changes — all exis
 labels and workflows continue to work. The new planning stage is additive; operators
 on `governance.planning: off` see no behaviour change.
 
+`specVersion` in `agentOS.yaml` bumps from `"1.0"` to `"1.1"` to reflect the new
+governance block, planner role, and label axis additions described below. This is
+the field `agentOS upgrade` reads to detect drift, and the value embedded in
+generated `agent-orchestrator.yml` workflows via `{{SPEC_VERSION}}`.
+
+### Fixed
+
+- `bootstrap/agentOS.yaml` and `bootstrap/templates/` (the copies bundled into the
+  installable package and used by `agentOS init` with no `--from` source) had
+  drifted from the canonical root `agentOS.yaml` / `templates/` and were missing
+  the planner role, governance block, and related labels added below. Re-synced;
+  `agentOS init` with no source and `agentOS init --from github:open-agentos/spec`
+  now produce identical output.
+
 ### Added
 
 **Labels (3 new)**

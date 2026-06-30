@@ -11,6 +11,8 @@ name: Agent Orchestrator
 on:
   issues:
     types: [opened, labeled, closed]
+  issue_comment:
+    types: [created]
   pull_request:
     types: [labeled]
 
@@ -29,18 +31,30 @@ jobs:
   orchestrate:
     name: Route label to agent
     runs-on: ubuntu-latest
-    # Only run when a status:* label was just applied (issues or PRs)
+    # Run when:
+    #   (a) a status:* label is applied to an issue or PR, OR
+    #   (b) a slash-command comment is posted on an issue
     if: >
       (github.event_name == 'issues' && github.event.action == 'labeled' &&
        startsWith(github.event.label.name, 'status:')) ||
       (github.event_name == 'pull_request' && github.event.action == 'labeled' &&
-       startsWith(github.event.label.name, 'status:'))
+       startsWith(github.event.label.name, 'status:')) ||
+      (github.event_name == 'issue_comment' && github.event.action == 'created' &&
+       (startsWith(github.event.comment.body, '/approve-plan') ||
+        startsWith(github.event.comment.body, '/request-changes')))
 
     env:
       LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
       LLM_MODEL: ${{ vars.LLM_MODEL }}
       AGENT_MAX_TURNS: ${{ vars.AGENT_MAX_TURNS || '{{MAX_TURNS}}' }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+
+      # Governance config — mirrors agentOS.yaml governance section.
+      # Override via repository variables to change without editing this file.
+      GOVERNANCE_PLANNING: ${{ vars.GOVERNANCE_PLANNING || 'required' }}
+      GOVERNANCE_APPROVERS: ${{ vars.GOVERNANCE_APPROVERS || 'admin' }}
+      GOVERNANCE_APPROVE_CMD: ${{ vars.GOVERNANCE_APPROVE_CMD || '/approve-plan' }}
+      GOVERNANCE_CHANGES_CMD: ${{ vars.GOVERNANCE_CHANGES_CMD || '/request-changes' }}
 
     steps:
       - name: Checkout repository
@@ -55,53 +69,287 @@ jobs:
         run: pip install -r scripts/requirements.txt
 
       # -----------------------------------------------------------------------
-      # Routing table — map each status label to an AGENT_ROLE
+      # Routing table — map each status label / slash-command to an AGENT_ROLE
       # -----------------------------------------------------------------------
-      - name: Resolve agent role from label
+      - name: Resolve agent role from event
         id: resolve-role
         run: |
-          LABEL="${{ github.event.label.name }}"
-          echo "Incoming label: $LABEL"
+          EVENT="${{ github.event_name }}"
+          ACTION="${{ github.event.action }}"
 
-          if   [ "$LABEL" = "status:todo" ]; then
-            echo "AGENT_ROLE=builder"  >> "$GITHUB_ENV"
-          elif [ "$LABEL" = "status:changes-requested" ]; then
-            echo "AGENT_ROLE=builder"  >> "$GITHUB_ENV"
-          elif [ "$LABEL" = "status:in-review" ]; then
-            echo "AGENT_ROLE=reviewer" >> "$GITHUB_ENV"
-          elif [ "$LABEL" = "status:approved" ]; then
-            # Skip if docs agent is not configured
-            if [ -z "${{ vars.DOCS_CONFIGURED }}" ]; then
-              echo "Docs agent not configured — skipping."
-              echo "AGENT_ROLE=skip" >> "$GITHUB_ENV"
+          if [ "$EVENT" = "issue_comment" ]; then
+            COMMENT_BODY="${{ github.event.comment.body }}"
+            if echo "$COMMENT_BODY" | grep -q "^/approve-plan"; then
+              echo "AGENT_ROLE=__approve_plan__" >> "$GITHUB_ENV"
+            elif echo "$COMMENT_BODY" | grep -q "^/request-changes"; then
+              echo "AGENT_ROLE=__request_changes__" >> "$GITHUB_ENV"
             else
-              echo "AGENT_ROLE=docs" >> "$GITHUB_ENV"
-            fi
-          elif [ "$LABEL" = "status:planning" ]; then
-            # Skip if planner agent is not configured
-            if [ -z "${{ vars.PLANNER_CONFIGURED }}" ]; then
-              echo "Planner agent not configured — skipping."
               echo "AGENT_ROLE=skip" >> "$GITHUB_ENV"
-            else
-              echo "AGENT_ROLE=planner" >> "$GITHUB_ENV"
             fi
           else
-            echo "No matching role for label '$LABEL' — skipping."
-            echo "AGENT_ROLE=skip" >> "$GITHUB_ENV"
+            LABEL="${{ github.event.label.name }}"
+            echo "Incoming label: $LABEL"
+
+            if   [ "$LABEL" = "status:plan" ]; then
+              # Planner role — always enabled (core, not optional)
+              echo "AGENT_ROLE=planner" >> "$GITHUB_ENV"
+            elif [ "$LABEL" = "status:todo" ]; then
+              # Builder dispatch is gated by the approval check below.
+              # Set a sentinel — the approval-gate step decides whether to run.
+              echo "AGENT_ROLE=__todo_gate__" >> "$GITHUB_ENV"
+            elif [ "$LABEL" = "status:changes-requested" ]; then
+              echo "AGENT_ROLE=builder"  >> "$GITHUB_ENV"
+            elif [ "$LABEL" = "status:in-review" ]; then
+              echo "AGENT_ROLE=reviewer" >> "$GITHUB_ENV"
+            elif [ "$LABEL" = "status:approved" ]; then
+              # Skip if docs agent is not configured
+              if [ -z "${{ vars.DOCS_CONFIGURED }}" ]; then
+                echo "Docs agent not configured — skipping."
+                echo "AGENT_ROLE=skip" >> "$GITHUB_ENV"
+              else
+                echo "AGENT_ROLE=docs" >> "$GITHUB_ENV"
+              fi
+            else
+              echo "No matching role for label '$LABEL' — skipping."
+              echo "AGENT_ROLE=skip" >> "$GITHUB_ENV"
+            fi
           fi
 
       # -----------------------------------------------------------------------
-      # Resolve issue number (works for both issue events and PR events)
+      # Resolve issue number (works for issue events, PR events, and comments)
       # -----------------------------------------------------------------------
       - name: Set issue number
         if: env.AGENT_ROLE != 'skip'
         run: |
           if [ "${{ github.event_name }}" = "issues" ]; then
             echo "ISSUE_NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"
+          elif [ "${{ github.event_name }}" = "issue_comment" ]; then
+            echo "ISSUE_NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"
           else
-            # For pull_request events use the PR number as the issue reference
             echo "ISSUE_NUMBER=${{ github.event.pull_request.number }}" >> "$GITHUB_ENV"
           fi
+
+      # -----------------------------------------------------------------------
+      # /approve-plan handler — dispatch-time approval gate
+      #
+      # Security model: approval is NOT stored in a label. It is verified live at
+      # the moment of dispatch by checking the commenter's GitHub permission level
+      # against governance.approvers. Manually editing labels does nothing, because
+      # no label is consulted for the security decision.
+      #
+      # A build is dispatched only when ALL conditions hold:
+      #   1. The issue is at status:plan-review or status:todo.
+      #   2. The issue body contains a plan block (or planning is optional/off).
+      #   3. An /approve-plan comment exists from a user whose permission level is
+      #      in governance.approvers.
+      #   4. That approval comment postdates the most recent plan receipt
+      #      (stale approval ≠ current approval).
+      # -----------------------------------------------------------------------
+      - name: Handle /approve-plan and /request-changes
+        id: approval-gate
+        if: >
+          env.AGENT_ROLE == '__approve_plan__' ||
+          env.AGENT_ROLE == '__request_changes__' ||
+          env.AGENT_ROLE == '__todo_gate__'
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUMBER: ${{ env.ISSUE_NUMBER }}
+          GOVERNANCE_PLANNING: ${{ env.GOVERNANCE_PLANNING }}
+          GOVERNANCE_APPROVERS: ${{ env.GOVERNANCE_APPROVERS }}
+          GOVERNANCE_APPROVE_CMD: ${{ env.GOVERNANCE_APPROVE_CMD }}
+          GOVERNANCE_CHANGES_CMD: ${{ env.GOVERNANCE_CHANGES_CMD }}
+          BUILDER_APP_ID: ${{ secrets.BUILDER_APP_ID }}
+          BUILDER_PRIVATE_KEY: ${{ secrets.BUILDER_PRIVATE_KEY }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = parseInt(process.env.ISSUE_NUMBER, 10);
+            const PLANNING       = process.env.GOVERNANCE_PLANNING  || 'required';
+            const APPROVE_CMD    = process.env.GOVERNANCE_APPROVE_CMD  || '/approve-plan';
+            const CHANGES_CMD    = process.env.GOVERNANCE_CHANGES_CMD  || '/request-changes';
+            const APPROVER_LEVELS = (process.env.GOVERNANCE_APPROVERS || 'admin').split(',').map(s => s.trim());
+
+            const PLAN_BEGIN = '<!-- AGENTOS:PLAN:BEGIN -->';
+            const PLAN_RECEIPT_RE = /plan is ready for review|plan receipt/i;
+
+            // ---- Helper: check if a user has an approver-level permission ----
+            async function isApprover(username) {
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel(
+                  { owner, repo, username });
+                return APPROVER_LEVELS.includes(data.permission);
+              } catch (_) {
+                return false;
+              }
+            }
+
+            // ---- Helper: find the timestamp of the latest plan receipt comment ----
+            function latestPlanReceiptAt(comments) {
+              const receipts = comments.filter(c => PLAN_RECEIPT_RE.test(c.body || ''));
+              if (!receipts.length) return null;
+              return receipts.reduce((latest, c) =>
+                new Date(c.created_at) > new Date(latest) ? c.created_at : latest,
+                receipts[0].created_at);
+            }
+
+            // ---- Helper: find the latest valid approval comment ----
+            async function latestValidApproval(comments, afterTimestamp) {
+              // Walk comments newest-first so we short-circuit fast.
+              const sorted = [...comments].sort((a,b) =>
+                new Date(b.created_at) - new Date(a.created_at));
+              for (const c of sorted) {
+                if (!(c.body || '').trim().startsWith(APPROVE_CMD)) continue;
+                if (afterTimestamp && new Date(c.created_at) <= new Date(afterTimestamp)) {
+                  // Stale — this approval predates the latest plan revision.
+                  continue;
+                }
+                if (await isApprover(c.user.login)) {
+                  return c;
+                }
+              }
+              return null;
+            }
+
+            // ---- Helper: post a polite refusal comment ----
+            async function postRefusal(msg) {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: msg });
+            }
+
+            // ---- Helper: move issue to status:todo and dispatch builder ----
+            async function dispatchBuilder(approvedBy) {
+              // Remove plan-review label, apply todo
+              try {
+                await github.rest.issues.removeLabel(
+                  { owner, repo, issue_number, name: 'status:plan-review' });
+              } catch (_) {}
+              await github.rest.issues.addLabels(
+                { owner, repo, issue_number, labels: ['status:todo'] });
+
+              // Post approval receipt
+              const body = [
+                '<!-- agentOS:run-receipt -->',
+                `**Approval Receipt** | Role: orchestrator | Issue: #${issue_number}`,
+                '',
+                `Plan approved by @${approvedBy}. Builder has been dispatched.`,
+                '<!-- /agentOS:run-receipt -->'
+              ].join('\n');
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+
+              core.setOutput('dispatch_builder', 'true');
+            }
+
+            // ---- Helper: check all build conditions ----
+            async function readyToBuild(issue, comments) {
+              const labels = (issue.labels || []).map(l => l.name);
+              const onReviewOrTodo = labels.includes('status:plan-review') ||
+                                     labels.includes('status:todo');
+              if (!onReviewOrTodo) return { ready: false, reason: 'not at plan-review or todo' };
+
+              const hasPlan = (issue.body || '').includes(PLAN_BEGIN);
+              if (PLANNING === 'required' && !hasPlan) {
+                return { ready: false, reason: 'plan block missing and planning is required' };
+              }
+
+              const lastPlanAt = latestPlanReceiptAt(comments);
+              const approval = await latestValidApproval(comments, lastPlanAt);
+              if (!approval) {
+                return { ready: false, reason: 'no valid post-plan approval found' };
+              }
+              return { ready: true, approvedBy: approval.user.login };
+            }
+
+            // ======== MAIN DISPATCH LOGIC ========
+
+            const agentRole = process.env.AGENT_ROLE || '';
+            core.setOutput('dispatch_builder', 'false');
+            core.setOutput('resolved_role', 'skip');
+
+            const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number });
+            const comments = await github.paginate(
+              github.rest.issues.listComments, { owner, repo, issue_number });
+            comments.sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+
+            if (agentRole === '__request_changes__') {
+              // ---- /request-changes: send back to status:plan ----
+              const commenter = context.payload.comment.user.login;
+              if (!await isApprover(commenter)) {
+                await postRefusal(
+                  `@${commenter} — only users with admin permission can request plan changes.`);
+                core.setOutput('resolved_role', 'skip');
+                return;
+              }
+              // Remove plan-review, apply plan (re-triggers planner)
+              try {
+                await github.rest.issues.removeLabel(
+                  { owner, repo, issue_number, name: 'status:plan-review' });
+              } catch (_) {}
+              await github.rest.issues.addLabels(
+                { owner, repo, issue_number, labels: ['status:plan'] });
+              core.setOutput('resolved_role', 'skip'); // planner will fire on the label event
+              return;
+            }
+
+            if (agentRole === '__approve_plan__') {
+              // ---- /approve-plan comment: check and dispatch ----
+              const commenter = context.payload.comment.user.login;
+              if (!await isApprover(commenter)) {
+                await postRefusal(
+                  `@${commenter} — only users with \`${APPROVER_LEVELS.join('`/`')}\` ` +
+                  `permission level may approve plans. No build dispatched.`);
+                core.setOutput('resolved_role', 'skip');
+                return;
+              }
+              const check = await readyToBuild(issue, comments);
+              if (!check.ready) {
+                await postRefusal(
+                  `@${commenter} — plan approval noted, but cannot dispatch builder yet: ` +
+                  `${check.reason}. Please ensure the issue has a plan block and is at ` +
+                  `\`status:plan-review\`.`);
+                core.setOutput('resolved_role', 'skip');
+                return;
+              }
+              await dispatchBuilder(commenter);
+              core.setOutput('resolved_role', 'builder');
+              return;
+            }
+
+            if (agentRole === '__todo_gate__') {
+              // ---- status:todo label applied: check approval before dispatching builder ----
+              if (PLANNING === 'off') {
+                // Legacy mode — no approval check required
+                core.setOutput('resolved_role', 'builder');
+                return;
+              }
+              const check = await readyToBuild(issue, comments);
+              if (!check.ready) {
+                // No valid approval — do not dispatch. Log and skip silently.
+                console.log(
+                  `status:todo applied to #${issue_number} but approval check failed: ` +
+                  check.reason + '. No build dispatched.');
+                core.setOutput('resolved_role', 'skip');
+                return;
+              }
+              // Valid approval exists — proceed with builder dispatch
+              core.setOutput('dispatch_builder', 'true');
+              core.setOutput('resolved_role', 'builder');
+              return;
+            }
+
+            // Should not reach here for these role values, but be safe
+            core.setOutput('resolved_role', agentRole);
+
+      # -----------------------------------------------------------------------
+      # Merge resolved role back into AGENT_ROLE env for downstream steps
+      # -----------------------------------------------------------------------
+      - name: Apply resolved role
+        if: >
+          env.AGENT_ROLE == '__approve_plan__' ||
+          env.AGENT_ROLE == '__request_changes__' ||
+          env.AGENT_ROLE == '__todo_gate__'
+        run: |
+          RESOLVED="${{ steps.approval-gate.outputs.resolved_role }}"
+          echo "AGENT_ROLE=${RESOLVED}" >> "$GITHUB_ENV"
 
       # -----------------------------------------------------------------------
       # Mint a scoped GitHub token for the resolved agent role
@@ -116,13 +364,25 @@ jobs:
           REVIEWER_PRIVATE_KEY: ${{ secrets.REVIEWER_PRIVATE_KEY }}
           WATCHER_APP_ID: ${{ secrets.WATCHER_APP_ID }}
           WATCHER_PRIVATE_KEY: ${{ secrets.WATCHER_PRIVATE_KEY }}
+          # Planner reuses builder App credentials until a dedicated App is provisioned
+          PLANNER_APP_ID: ${{ secrets.BUILDER_APP_ID }}
+          PLANNER_PRIVATE_KEY: ${{ secrets.BUILDER_PRIVATE_KEY }}
         run: |
           AGENT_TOKEN=$(python3 scripts/github_token.py "$AGENT_ROLE")
           echo "::add-mask::$AGENT_TOKEN"
           echo "GITHUB_TOKEN=$AGENT_TOKEN" >> "$GITHUB_ENV"
 
       # -----------------------------------------------------------------------
+      # Install Claude Code CLI (required on ubuntu-latest runners)
+      # -----------------------------------------------------------------------
+      - name: Install Claude CLI
+        if: env.AGENT_ROLE != 'skip'
+        run: npm install -g @anthropic-ai/claude-code
+
+      # -----------------------------------------------------------------------
       # Run the agent ({{AGENT_RUNNER}} is replaced at install time)
+      # For the planner role, a concurrency group (see top-level concurrency:)
+      # prevents two planner runs from racing on the same issue.
       # -----------------------------------------------------------------------
       - name: Run agent
         if: env.AGENT_ROLE != 'skip'
@@ -135,6 +395,75 @@ jobs:
           LLM_MODEL: ${{ env.LLM_MODEL }}
           AGENT_MAX_TURNS: ${{ env.AGENT_MAX_TURNS }}
           LLM_API_KEY: ${{ env.LLM_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  # ---------------------------------------------------------------------------
+  # plan-orchestrator — dispatches planner with a per-issue concurrency group
+  # This is a separate job so the concurrency key can include the issue number.
+  # The `orchestrate` job routes status:plan to AGENT_ROLE=planner; this job
+  # enforces the concurrency guard so only one planner runs per issue.
+  # ---------------------------------------------------------------------------
+  plan-orchestrator:
+    name: Dispatch planner (concurrency-guarded)
+    runs-on: ubuntu-latest
+    # Only run when a status:plan label was applied
+    if: >
+      github.event_name == 'issues' && github.event.action == 'labeled' &&
+      github.event.label.name == 'status:plan'
+    # One planner at a time per issue — prevents duplicate plan blocks.
+    concurrency:
+      group: planner-${{ github.event.issue.number }}
+      cancel-in-progress: true
+
+    env:
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
+      AGENT_MAX_TURNS: ${{ vars.AGENT_MAX_TURNS || '{{MAX_TURNS}}' }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      AGENT_ROLE: planner
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install script dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Set issue number
+        run: echo "ISSUE_NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"
+
+      - name: Mint GitHub token for planner role
+        id: mint-token
+        env:
+          # Planner reuses builder App credentials until a dedicated App is provisioned
+          BUILDER_APP_ID: ${{ secrets.BUILDER_APP_ID }}
+          BUILDER_PRIVATE_KEY: ${{ secrets.BUILDER_PRIVATE_KEY }}
+          PLANNER_APP_ID: ${{ secrets.BUILDER_APP_ID }}
+          PLANNER_PRIVATE_KEY: ${{ secrets.BUILDER_PRIVATE_KEY }}
+        run: |
+          AGENT_TOKEN=$(python3 scripts/github_token.py "planner")
+          echo "::add-mask::$AGENT_TOKEN"
+          echo "GITHUB_TOKEN=$AGENT_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Install Claude CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run planner agent
+        run: '{{AGENT_RUNNER}}'
+        env:
+          AGENT_ROLE: planner
+          ISSUE_NUMBER: ${{ env.ISSUE_NUMBER }}
+          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+          LLM_PROVIDER: ${{ env.LLM_PROVIDER }}
+          LLM_MODEL: ${{ env.LLM_MODEL }}
+          AGENT_MAX_TURNS: ${{ env.AGENT_MAX_TURNS }}
+          LLM_API_KEY: ${{ env.LLM_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # ---------------------------------------------------------------------------
   # post-run-receipt — calls run-receipt.yml after orchestrate finishes
@@ -155,6 +484,8 @@ jobs:
     name: Apply status:done on close
     runs-on: ubuntu-latest
     if: github.event_name == 'issues' && github.event.action == 'closed'
+    permissions:
+      issues: write
 
     steps:
       - name: Apply status:done label
@@ -163,6 +494,14 @@ jobs:
         run: |
           gh issue edit ${{ github.event.issue.number }} \
             --add-label "status:done" \
+            --remove-label "status:plan" \
+            --remove-label "status:plan-review" \
+            --remove-label "status:todo" \
+            --remove-label "status:in-progress" \
+            --remove-label "status:in-review" \
+            --remove-label "status:approved" \
+            --remove-label "status:changes-requested" \
+            --remove-label "status:blocked" \
             --repo "${{ github.repository }}"
 
   # ---------------------------------------------------------------------------

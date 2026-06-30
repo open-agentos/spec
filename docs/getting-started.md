@@ -16,7 +16,7 @@ uv tool install agentOS-cli
 
 # Pull the spec into a repo
 cd my-agent-repo
-agentOS init --from github:open-agentos/spec@v1.0
+agentOS init --from github:open-agentos/spec@v1.1.0
 
 # Create the one App a first run needs (opens the browser once)
 agentOS setup --repo my-org/my-agent-repo --apps builder
@@ -84,7 +84,7 @@ The same five steps, with what each one does.
 
 ```bash
 uv tool install agentOS-cli
-agentOS init --from github:open-agentos/spec@v1.0
+agentOS init --from github:open-agentos/spec@v1.1.0
 ```
 
 `init` fetches the canonical `agentOS.yaml` from the spec repo, writes it locally, and creates a `.agentOS/` scaffold whose `keys/` directory is git-ignored. Pin to a tag rather than `@main` so a later spec change can't alter your label model without you asking for it.

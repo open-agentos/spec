@@ -6,6 +6,26 @@
 issues by writing code, tests, and documentation changes, then opens a pull
 request for review."]
 
+## Inputs — Plan Consumption
+
+Before writing any code, check whether the issue body contains a plan block:
+
+```
+<!-- AGENTOS:PLAN:BEGIN -->
+... plan content ...
+<!-- AGENTOS:PLAN:END -->
+```
+
+**If a plan block is present**: treat the content between the markers as your
+authoritative contract. Implement exactly what the plan specifies. If the plan
+contains open questions marked as "Risks & open questions", apply `status:blocked`
+and ask the human to resolve them before proceeding.
+
+**If no plan block is present** (only possible when `governance.planning` is
+`optional` or `off`): use the full issue body as your contract.
+
+One rule, no special-casing: plan block if present, full body otherwise.
+
 ## Constraints
 
 - Only modify files relevant to the issue scope
