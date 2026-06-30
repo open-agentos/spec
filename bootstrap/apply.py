@@ -101,6 +101,10 @@ def _step_labels(spec: dict, opts: ApplyOptions, state: BootstrapState) -> StepO
     )
     if result.ok:
         detail = result.summary()
+        if opts.dry_run:
+            # Nothing was actually written — don't mark this step complete in
+            # state, or a subsequent real `apply` run will skip it entirely.
+            return StepOutcome("complete", f"[dry-run] {detail}")
         state.mark_complete("labels")
         return StepOutcome("complete", detail)
     else:
@@ -128,6 +132,8 @@ def _step_board(spec: dict, opts: ApplyOptions, state: BootstrapState) -> StepOu
         return StepOutcome("skipped", "fingerprint match — already in sync")
     if result.ok:
         detail = f"board={result.board_id} fields={len(result.created_fields)}"
+        if opts.dry_run:
+            return StepOutcome("complete", f"[dry-run] {detail}")
         state.mark_complete("board")
         return StepOutcome("complete", detail)
     else:
@@ -147,6 +153,8 @@ def _step_workflows(spec: dict, opts: ApplyOptions, state: BootstrapState) -> St
     )
     if result.ok:
         detail = result.summary()
+        if opts.dry_run:
+            return StepOutcome("complete", f"[dry-run] {detail}")
         state.mark_complete("workflows")
         return StepOutcome("complete", detail)
     else:
@@ -167,6 +175,8 @@ def _step_scaffold(spec: dict, opts: ApplyOptions, state: BootstrapState) -> Ste
     )
     if result.ok:
         detail = result.summary()
+        if opts.dry_run:
+            return StepOutcome("complete", f"[dry-run] {detail}")
         state.mark_complete("scaffold")
         return StepOutcome("complete", detail)
     else:
@@ -193,6 +203,8 @@ def _step_instrument(spec: dict, opts: ApplyOptions, state: BootstrapState) -> S
         n = len(result.files_instrumented)
         s = len(result.files_skipped)
         detail = f"instrumented={n} already_marked={s} missing={len(result.files_missing)}"
+        if opts.dry_run:
+            return StepOutcome("complete", f"[dry-run] {detail}")
         state.mark_complete("instrument")
         return StepOutcome("complete", detail)
     else:
