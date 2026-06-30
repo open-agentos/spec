@@ -83,6 +83,7 @@ Then label an issue `type:feature` + `status:todo` and watch the PR open. Full w
 - [Label Model](./docs/label-model.md) — the state machine behind the labels
 - [Metrics Schema](./docs/metrics-schema.md) — the run-record corpus
 - [Specification](./SPEC.md) — the normative reference
+- [Uninstall](./docs/uninstall.md) — how to remove agentOS from a repo
 
 ## License
 

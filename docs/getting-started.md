@@ -2,6 +2,8 @@
 
 By the end of this quick setup guide, you will have a GitHub repository provisioned with the Open AgentOS label model, project board, GitHub Actions workflows, and agent scaffolding — and you will have watched your first automated agent run complete successfully. It should take less than 15 minutes for someone comfortable with GitHub features and command line tools.
 
+If at any time you wish to stop and reverse out of the installation process, you can uninstall it by referring to the [uninstall guide](./uninstall.md).
+
 ---
 
 ## Fast path
@@ -217,3 +219,4 @@ Every run appends to a structured corpus — cost, turns, outcome, exit status. 
 - [Label Model](./label-model.md) — the state machine behind the labels
 - [Troubleshooting](./troubleshooting.md) — fixes for the common failures
 - [Specification](../SPEC.md) — the normative reference
+- [Uninstall](./uninstall.md) — how to remove agentOS from a repo
