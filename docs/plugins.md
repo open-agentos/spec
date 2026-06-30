@@ -595,7 +595,7 @@ Run this in CI using a GitHub Actions workflow in your plugin repository:
         runs-on: ubuntu-latest
         steps:
           - uses: actions/checkout@v4
-          - run: pip install agentOS-cli
+          - run: pip install open-agentos-cli
           - run: bash tests/run-tests.sh
 
 ### The plugin validate subcommand

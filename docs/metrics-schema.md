@@ -121,7 +121,7 @@ The identity block identifies who ran what on which issue.
 
 Field notes:
 - `schema_version` is repeated here for convenience; always equals 6.
-- `runner_version` is the version of the hermes/claude/codex binary, not agentOS-cli.
+- `runner_version` is the version of the hermes/claude/codex binary, not open-agentos-cli.
 - `model` is the primary model used. If multiple models were used in one run (e.g.,
   a cheap model for tool calls and an expensive model for synthesis), this field
   records the primary model and the per_turn array in the cost block records the

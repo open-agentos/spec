@@ -128,3 +128,34 @@ def test_no_stale_v1_0_install_refs():
         if re.search(r"open-agentos/spec[^\n]*@v1\.0(?!\.\d)", text):
             offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, f"Stale @v1.0 spec install refs found in: {offenders}"
+
+
+def test_install_instructions_match_pyproject_package_name():
+    """`pip install <name>` / `uv tool install <name>` in docs must match the
+    actual registered PyPI project name in pyproject.toml. This caught a real
+    bug: docs said `agentOS-cli`, pyproject.toml said `open-agentos`, and
+    neither matched the name PyPI actually accepted (`open-agentos-cli`)."""
+    pyproject = tomllib.loads(_read_text(REPO_ROOT / "pyproject.toml"))
+    pkg_name = pyproject["project"]["name"]
+
+    offenders = []
+    for path in REPO_ROOT.rglob("*"):
+        if not path.is_file() or ".git" in path.parts:
+            continue
+        if path.suffix != ".md":
+            continue
+        text = _read_text(path)
+        for match in re.finditer(
+            r"(?:pip|uv tool) install ([A-Za-z0-9][A-Za-z0-9._-]*)", text
+        ):
+            name = match.group(1)
+            # Ignore obvious non-package args / flags people pip install in examples.
+            if name in {"-e", "build", "twine", "."}:
+                continue
+            if name != pkg_name:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: installs '{name}'")
+
+    assert not offenders, (
+        f"Install instructions don't match pyproject.toml name ({pkg_name!r}): "
+        + "; ".join(offenders)
+    )

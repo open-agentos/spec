@@ -60,7 +60,7 @@ A first run needs one agent. The full review-and-settle loop comes after.
 
 ```bash
 # Install, and pull the spec into a repo
-uv tool install agentOS-cli
+uv tool install open-agentos-cli
 cd my-agent-repo
 agentOS init --from github:open-agentos/spec@v1.1.0
 

@@ -12,7 +12,7 @@ With the [prerequisites](#before-you-start) in place, these commands take you fr
 
 ```bash
 # Install the CLI
-uv tool install agentOS-cli
+uv tool install open-agentos-cli
 
 # Pull the spec into a repo
 cd my-agent-repo
@@ -55,7 +55,7 @@ gh auth refresh -s admin:org,project
 
 **Python 3.11+.** Check with `python3 --version`.
 
-**uv.** The CLI installs into an isolated environment with [uv](https://docs.astral.sh/uv/); `pip install agentOS-cli` in a virtualenv also works.
+**uv.** The CLI installs into an isolated environment with [uv](https://docs.astral.sh/uv/); `pip install open-agentos-cli` in a virtualenv also works.
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -83,7 +83,7 @@ The same five steps, with what each one does.
 ### 1. Install and initialise
 
 ```bash
-uv tool install agentOS-cli
+uv tool install open-agentos-cli
 agentOS init --from github:open-agentos/spec@v1.1.0
 ```
 

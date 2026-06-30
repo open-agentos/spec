@@ -23,6 +23,15 @@ generated `agent-orchestrator.yml` workflows via `{{SPEC_VERSION}}`.
 
 ### Fixed
 
+- The PyPI package is published as `open-agentos-cli`. The bare name
+  `open-agentos` (and the docs' prior `agentOS-cli`, which never matched
+  either) collided with PyPI's name-similarity check against an existing,
+  unrelated `agentos` package. `pyproject.toml` and every `pip install` /
+  `uv tool install` instruction in the docs now consistently reference
+  `open-agentos-cli`. Note this only affects the PyPI package name — the
+  GitHub repo (`open-agentos/spec`), the `agentOS` CLI command, and the
+  `bootstrap` Python module are unchanged.
+
 - `bootstrap/agentOS.yaml` and `bootstrap/templates/` (the copies bundled into the
   installable package and used by `agentOS init` with no `--from` source) had
   drifted from the canonical root `agentOS.yaml` / `templates/` and were missing
@@ -109,7 +118,7 @@ reference implementation (https://github.com/mattmcalister/3qs-ops).
 - `schema/field-bindings.schema.json` — JSON Schema for live GraphQL node ID mapping
 - `schema/project-rules.schema.json` — JSON Schema for project-rules.json
 
-**Bootstrap CLI** (`pip install agentOS-cli`)
+**Bootstrap CLI** (`pip install open-agentos-cli`)
 - `agentOS init` — generate agentOS.yaml from spec or blank template
 - `agentOS setup` — interactive GitHub App manifest wizard (4 apps)
 - `agentOS apply` — idempotent provisioner: labels → board → workflows → scaffold
