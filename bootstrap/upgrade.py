@@ -73,7 +73,7 @@ MANAGED_BEGIN_RE = re.compile(
 MANAGED_END = "<!-- agentOS:managed:end -->"
 
 _GITHUB_API = "https://api.github.com"
-_SPEC_REPO = "open-agentos/spec"
+_SPEC_REPO = "open-agentos/agentos"
 
 # Files the upgrade engine manages.
 # Each entry: (path_glob_relative_to_target, template_path_relative_to_spec_templates)
@@ -648,7 +648,7 @@ def run_upgrade(opts: UpgradeOptions) -> UpgradeResult:
         else:
             result.errors.append(
                 "Could not determine target version. "
-                "Pass --to VERSION explicitly, or ensure open-agentos/spec has a "
+                "Pass --to VERSION explicitly, or ensure open-agentos/agentos has a "
                 "published release tag."
             )
         if not opts.dry_run:

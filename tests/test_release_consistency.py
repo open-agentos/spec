@@ -125,7 +125,7 @@ def test_no_stale_v1_0_install_refs():
         if path.suffix not in {".md", ".yaml", ".yml"}:
             continue
         text = _read_text(path)
-        if re.search(r"open-agentos/spec[^\n]*@v1\.0(?!\.\d)", text):
+        if re.search(r"open-agentos/agentos[^\n]*@v1\.0(?!\.\d)", text):
             offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, f"Stale @v1.0 spec install refs found in: {offenders}"
 

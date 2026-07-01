@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/open-agentos/spec/schema/run-record.schema.json",
+  "$id": "https://github.com/open-agentos/agentos/schema/run-record.schema.json",
   "title": "AgentOS Run Record v6",
   "description": "JSONL schema for agent run records and settlement events. One record per line. Each line MUST be valid JSON.",
   "type": "object",

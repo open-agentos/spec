@@ -8,7 +8,7 @@ Template variables (in workflow YAML files, written as {{VARIABLE}}):
   {{AGENT_RUNNER}}      The runner command from runtime.runner in agentOS.yaml
   {{MAX_TURNS}}         runtime.max_turns_default
   {{BRANCH_CONVENTION}} runtime.branch_convention
-  {{SPEC_REPO}}         The open-agentos/spec repo reference
+  {{SPEC_REPO}}         The open-agentos/agentos repo reference
   {{SPEC_VERSION}}      specVersion from agentOS.yaml
 
 Idempotency:
@@ -67,7 +67,7 @@ def _build_vars(spec: dict[str, Any]) -> dict[str, str]:
         "AGENT_RUNNER": runtime.get("runner", "hermes run"),
         "MAX_TURNS": str(runtime.get("max_turns_default", 40)),
         "BRANCH_CONVENTION": runtime.get("branch_convention", "agent/{role}/{issue_number}-{slug}"),
-        "SPEC_REPO": "open-agentos/spec",
+        "SPEC_REPO": "open-agentos/agentos",
         "SPEC_VERSION": spec.get("specVersion", "1.0"),
         "RECEIPT_MARKER": runtime.get("receipt_comment_marker", "<!-- agentOS:run-receipt -->"),
     }
