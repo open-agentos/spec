@@ -62,7 +62,7 @@ A first run needs one agent. The full review-and-settle loop comes after.
 # Install, and pull the spec into a repo
 uv tool install open-agentos-cli
 cd my-agent-repo
-agentOS init --from github:open-agentos/spec@v1.1.0
+agentOS init --from github:open-agentos/agentos@v1.1.0
 
 # Create the one App a first run needs (opens the browser once)
 agentOS setup --repo my-org/my-agent-repo --apps builder
