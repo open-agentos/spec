@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/open-agentos/spec/schema/agentOS.schema.json",
+  "$id": "https://github.com/open-agentos/agentos/schema/agentOS.schema.json",
   "title": "GitHub AgentOS Spec",
   "description": "Schema for agentOS.yaml — the portable configuration file for label-driven multi-agent orchestration on GitHub.",
   "type": "object",
@@ -305,7 +305,7 @@
             "type": "string",
             "description": "Plugin location. Format: 'github:{owner}/{repo}//{path}@{ref}' or 'local:{path}'.",
             "examples": [
-              "github:open-agentos/spec//plugins/three-questions@v1.0",
+              "github:open-agentos/agentos//plugins/three-questions@v1.0",
               "local:plugins/my-plugin"
             ]
           },

@@ -26,7 +26,7 @@ every user would need to understand and configure features they do not use.
 
 ### Plugins keep core upgrades safe
 
-When you upgrade to a new spec version (`agentOS init --from github:open-agentos/spec@v1.5.0 --merge`),
+When you upgrade to a new spec version (`agentOS init --from github:open-agentos/agentos@v1.5.0 --merge`),
 only the core-managed sections of agentOS.yaml are updated. Plugin-managed sections
 are preserved. Your custom labels, workflows, and board fields survive the upgrade
 untouched.
@@ -208,7 +208,7 @@ the core spec (Status, Agent) must always be present.
 Spec conformance (`agentOS verify --conformance`) checks that the repository has all
 required labels, fields, and workflows in their canonical form. A plugin that renames
 or removes core-required items causes conformance to fail. If you need to change a
-core item's behaviour, discuss it in the open-agentos/spec issue tracker as a spec
+core item's behaviour, discuss it in the open-agentos/agentos issue tracker as a spec
 proposal.
 
 ### Do not use the agentOS-core- workflow name prefix
@@ -553,7 +553,7 @@ For a complete integration test, use a dedicated test repository:
     cd agentos-plugin-test
 
     # Init spec
-    agentOS init --from github:open-agentos/spec@main
+    agentOS init --from github:open-agentos/agentos@main
 
     # Apply with your plugin
     agentOS apply \

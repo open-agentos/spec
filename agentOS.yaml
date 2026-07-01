@@ -3,7 +3,7 @@
 # Human-readable, git-diffable, versioned.
 #
 # Import this file into your project with:
-#   agentOS init --from github:open-agentos/spec@v1.1.0
+#   agentOS init --from github:open-agentos/agentos@v1.1.0
 #
 # Then provision your repository with:
 #   agentOS apply --repo owner/my-repo
@@ -14,7 +14,7 @@ specId: "github-agentOS"
 metadata:
   name: "GitHub AgentOS"
   description: "Label-driven multi-agent orchestration on GitHub"
-  homepage: "https://github.com/open-agentos/spec"
+  homepage: "https://github.com/open-agentos/agentos"
   license: "MIT"
   authors:
     - name: "Open AgentOS Contributors"
@@ -477,5 +477,5 @@ plugins: []
 # Example — uncomment to activate the reference 3Qs plugin:
 # plugins:
 #   - name: three-questions
-#     source: github:open-agentos/spec//plugins/three-questions@v1.1.0
+#     source: github:open-agentos/agentos//plugins/three-questions@v1.1.0
 #     description: "Daily 3Qs intelligence plugin — phase labels, watcher schedule"

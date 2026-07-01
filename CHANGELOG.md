@@ -29,14 +29,14 @@ generated `agent-orchestrator.yml` workflows via `{{SPEC_VERSION}}`.
   unrelated `agentos` package. `pyproject.toml` and every `pip install` /
   `uv tool install` instruction in the docs now consistently reference
   `open-agentos-cli`. Note this only affects the PyPI package name — the
-  GitHub repo (`open-agentos/spec`), the `agentOS` CLI command, and the
+  GitHub repo (`open-agentos/agentos`), the `agentOS` CLI command, and the
   `bootstrap` Python module are unchanged.
 
 - `bootstrap/agentOS.yaml` and `bootstrap/templates/` (the copies bundled into the
   installable package and used by `agentOS init` with no `--from` source) had
   drifted from the canonical root `agentOS.yaml` / `templates/` and were missing
   the planner role, governance block, and related labels added below. Re-synced;
-  `agentOS init` with no source and `agentOS init --from github:open-agentos/spec`
+  `agentOS init` with no source and `agentOS init --from github:open-agentos/agentos`
   now produce identical output.
 
 ### Added

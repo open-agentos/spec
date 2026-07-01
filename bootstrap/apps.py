@@ -150,7 +150,7 @@ def _print_app_instructions(
     print(f"     {settings_url}\n")
     print(f"2. Fill in the form with these settings:\n")
     print(f"   GitHub App name:  {app_name}")
-    print(f"   Homepage URL:     https://github.com/open-agentos/spec")
+    print(f"   Homepage URL:     https://github.com/open-agentos/agentos")
     print(f"   Webhooks:         ☐ Active  (uncheck — webhooks not used)")
     print(f"\n   Permissions:")
     print(_permissions_table(agent))
