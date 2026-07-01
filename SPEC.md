@@ -3,7 +3,6 @@
 **Version:** 1.0-draft
 **Status:** Draft
 **Org:** https://github.com/open-agentos
-**Reference Implementation:** https://github.com/mattmcalister/3qs-ops
 
 ---
 
@@ -33,7 +32,7 @@ runner can be dropped into any AgentOS-provisioned repository.
 
 MUST / MUST NOT / SHOULD / SHOULD NOT / MAY follow RFC 2119.
 
-  Spec repo     The github-agentOS-spec repository. Contains the agentOS.yaml file,
+  Agentos repo     The agentOS repository. Contains the agentOS.yaml file,
                 bootstrap CLI, templates, and this document.
 
   Target repo   The GitHub repository being provisioned. The user's project.
@@ -695,7 +694,7 @@ Plugins are listed in agentOS.yaml:
 ```yaml
 plugins:
   - name: three-questions
-    source: github:open-agentos/spec//plugins/three-questions@v1.1.0
+    source: github:open-agentos/agentos//plugins/three-questions@v1.1.0
 ```
 
 Sources supported in v1.0:
